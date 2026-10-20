@@ -1,130 +1,118 @@
-# Home Assistant Smart Water Controller Schedule Card
+# Smart Water Controller Cards
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/hcraveiro/Home-Assistant-Smart-Water-Controller-Schedule-Card.svg)](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller-Schedule-Card/releases/)
+Custom Home Assistant dashboard cards for the [Smart Water Controller integration](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller). **One HACS installation** provides three card types, with a consistent appearance.
 
-Configure the watering schedule of your Smart Water Controller integration directly from your Home Assistant dashboard.
+| Card | Type | Function |
+| --- | --- | --- |
+| Overview and Weather | `custom:irrigation-summary-card` | Controller overview, irrigation status, upcoming and previous activity, weather and rainfall details |
+| Irrigation Zones | `custom:irrigation-zones-card` | Expandable zones, manual duration, Start/Stop, live countdown and per-zone data |
+| Irrigation Schedule | `custom:smart-water-controller-schedule-card` | Edit monthly intervals, irrigation times and station durations; Save to the integration |
 
-- [Home Assistant Smart Water Controller Schedule Card](#home-assistant-smart-water-controller-schedule-card)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [Header options](#header-options)
-  - [What the card edits](#what-the-card-edits)
-  - [FAQ](#faq)
+The Schedule Card's original custom-element name remains unchanged for backward compatibility. Overview and Zones also retain their existing names.
 
 ## Installation
 
-This card can be installed through HACS like any other Lovelace card.
+1. Install **Smart Water Controller Cards** through HACS (Dashboard/Frontend repository). If upgrading the original Smart Water Controller Schedule Card repository, use **Redownload** to select the desired release.
+2. In **Settings → Dashboards → Resources**, ensure there is **one** HACS resource resembling:
+   `/hacsfiles/smart-water-controller-schedule-card/smart-water-controller-schedule-card.js?hacstag=...`
+3. Remove any *resource registrations* for standalone copies of `/local/irrigation-summary-card.js`, `/local/irrigation-zones-card.js`, `/local/irrigation-schedule-style.js`, or the `-dev` test bundle, if previously installed.
+4. Reload the Home Assistant frontend. The card YAML can stay as-is.
 
-Alternatively, you can manually download the `.js` file from the repository, place it in your `www` folder, and add it as a dashboard resource:
+Do not load both the standalone production card scripts and the HACS bundle: they register the same custom elements. You may retain backup files under `/config/www/`; remove only the redundant Resource entries.
 
-```yaml
-resources:
-  - url: /local/smart-water-controller-schedule-card.js
-    type: module
-```
+## Card configuration
 
-When installed through HACS, restart Home Assistant so the card becomes available.
-
-## Configuration
-
-To use this card, you must already have the [Smart Water Controller](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller) integration installed and at least one configured controller.
-
-Add one card per controller as a manual card:
+### Overview
 
 ```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.<config_entry_name>_controller_status
+type: custom:irrigation-summary-card
+mode: overview
 ```
 
-Example:
+This card defaults to RainBird-specific entities. Override the entity IDs in the card configuration for a different Smart Water Controller installation. The overview's connection banner uses `input_boolean.rainbird_connection_lost` by default; it is a display indicator, **not** the availability condition for zone controls.
+
+### Weather and Rain
+
+```yaml
+type: custom:irrigation-summary-card
+mode: weather
+```
+
+Weather details expand inside the same card. Both modes use the same registered card type.
+
+### Irrigation Zones
+
+```yaml
+type: custom:irrigation-zones-card
+duration: number.rainbird_irrigation_manual_duration
+duration_step: 1
+end_time: sensor.rainbird_irrigation_end_time
+stop: button.rainbird_stop_sprinkle
+show_global_stop: true
+connection_switches:
+  - switch.rain_bird_sprinkler_1
+  - switch.rain_bird_sprinkler_2
+  - switch.rain_bird_sprinkler_3
+zones:
+  - name: Front Lawn 1
+    status: sensor.rainbird_front_lawn_status_1
+    today: sensor.rainbird_sprinkle_total_amount_today_front_lawn
+    planned: sensor.rainbird_forecasted_sprinkle_today_front_lawn
+    remaining: sensor.rainbird_remaining_sprinkle_today_front_lawn
+    start: button.rainbird_sprinkle_front_lawn_1
+    valve: switch.rain_bird_sprinkler_1
+  - name: Front Lawn 2
+    status: sensor.rainbird_front_lawn_status_2
+    today: sensor.rainbird_sprinkle_total_amount_today_side_lawn
+    planned: sensor.rainbird_forecasted_sprinkle_today_side_lawn
+    remaining: sensor.rainbird_remaining_sprinkle_today_side_lawn
+    start: button.rainbird_sprinkle_front_lawn_2
+    valve: switch.rain_bird_sprinkler_2
+  - name: Side Lawn
+    status: sensor.rainbird_side_lawn_status
+    today: sensor.exterior_living_room_rainbird_sprinkle_total_amount_today_station_3
+    planned: sensor.exterior_living_room_rainbird_forecasted_sprinkle_today_station_3
+    remaining: sensor.exterior_living_room_rainbird_remaining_sprinkle_today_station_3
+    start: button.rainbird_sprinkle_side_lawn
+    valve: switch.rain_bird_sprinkler_3
+```
+
+Only one zone expands at a time; all start collapsed. Start, Stop, Stop All and duration adjustments are disabled if **any** entity in `connection_switches` is `unavailable` or `unknown`. These controls use the integration's switch states, not the external connection-loss helper. Start and Stop issue real Home Assistant service calls.
+
+Station entity IDs in the example reflect one RainBird setup. Adapt them to your controller; do not assume the entity IDs are universal.
+
+### Irrigation Schedule
 
 ```yaml
 type: custom:smart-water-controller-schedule-card
 sensor: sensor.rainbird_controller_status
+header: false
 ```
 
-## Header options
+To show a heading, use `header: true`. An optional `title: Irrigation Schedule` overrides the friendly name. The card loads the controller schedule from the sensor's attributes, supports month selection, days between cycles, multiple watering times and duration per station. **Save updates the real controller schedule.**
 
-The card supports an optional header.
+## Tested migration
 
-By default, the header is hidden:
+The `v2.0.0-beta.1` HACS prerelease was installed and the existing `Utilities / irri` view rendered all bundled cards successfully with **only the HACS resource enabled**. Schedule edits were verified in both directions between the original and bundled card, zone operation was tested, and the desktop click issue was retested after fixing excessive DOM rerenders. This is a user-tested setup, not an automated end-to-end compatibility guarantee.
 
-```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
+## Development
+
+Sources:
+- `src/schedule-card.js`
+- `src/schedule-style.js`
+- `src/overview-card.js`
+- `src/zones-card.js`
+
+Build from the repository root with Node.js:
+
+```sh
+node scripts/build.js
 ```
 
-To show the header using the controller entity friendly name:
+This generates `smart-water-controller-schedule-card.js`, the single HACS resource. The script checks individual source files and the bundle with `node --check`.
 
-```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
-header: true
-```
+See [TESTING.md](TESTING.md) for isolated `-dev` testing, [UNIFIED-CARDS.md](UNIFIED-CARDS.md) for architecture, and [BETA-RELEASE-NOTES.md](BETA-RELEASE-NOTES.md) for prerelease notes.
 
-To show the header with a custom title:
+## Updating and rollback
 
-```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
-header: true
-title: Irrigation Schedule
-```
-
-### Header behaviour
-
-- `header` is optional and defaults to `false`
-- when `header: true` and `title` is set, the custom title is shown
-- when `header: true` and `title` is not set, the entity `friendly_name` is shown
-- if no `friendly_name` is available, the card falls back to `Irrigation schedule`
-
-## What the card edits
-
-The card allows you to configure the monthly watering schedule for the selected controller.
-
-For each month, you can configure:
-
-- **Interval between sprinkles**  
-  The number of days between watering cycles.
-
-- **Scheduled times**  
-  One or more times for each watering day in that month.
-
-- **Sprinkle time per station**  
-  The watering duration in minutes for each station.
-
-If your Smart Water Controller integration has station names configured, the card will display those names instead of generic labels such as `Station 1`, `Station 2`, etc.
-
-After making changes, click **Save** to persist the updated schedule in the Smart Water Controller integration.
-
-## FAQ
-
-### Do I need one card per controller?
-
-Yes.  
-Each card is linked to a single controller status sensor.
-
-### Can I hide the title?
-
-Yes.  
-The header is hidden by default. Only set `header: true` if you want it shown.
-
-### Can I use a custom title?
-
-Yes.  
-Set both:
-
-```yaml
-header: true
-title: Irrigation Schedule
-```
-
-### Why do I see `Station 1` / `Station 2` instead of custom station names?
-
-The card shows custom station names when they are exposed by the Smart Water Controller integration on the controller status sensor attributes.
-
-### Do I need to save after editing?
-
-Yes.  
-Changes made in the card are only persisted after clicking **Save**.
+For upgrades, select the desired release in HACS, reload the browser (on desktop, `Ctrl + Shift + R`) and verify the three card types. To roll back, select a previously working HACS release via **Redownload** and reload. If returning to a release containing only the Schedule Card, restore the standalone Overview and Zones resources before using those cards.
