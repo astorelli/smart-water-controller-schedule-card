@@ -1,19 +1,22 @@
 #!/usr/bin/env node
-// Build a single HACS resource from the three custom cards.
+// Build one HACS JavaScript module from the four source modules.
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
-const sources = [
+const inputs = [
   'src/schedule-card.js',
+  'src/schedule-style.js',
   'src/overview-card.js',
   'src/zones-card.js'
 ];
-const output = 'smart-water-controller-schedule-card.js';
-const parts = sources.map(file => {
-  const fullPath = path.join(root, file);
-  if (!fs.existsSync(fullPath)) throw new Error('Missing source: ' + file);
-  return fs.readFileSync(fullPath, 'utf8');
-});
-const bundle = parts.join('\n;\n') + '\n';
-fs.writeFileSync(path.join(root, output), bundle);
-console.log('Created ' + output + ' (' + Buffer.byteLength(bundle) + ' bytes)');
+for (const input of inputs) {
+  const full = path.join(root, input);
+  if (!fs.existsSync(full)) throw new Error('Missing source: ' + input);
+  execFileSync(process.execPath, ['--check', full], { stdio: 'inherit' });
+}
+const bundle = inputs.map(p => fs.readFileSync(path.join(root,p), 'utf8')).join('\n;\n') + '\n';
+const destination = path.join(root, 'smart-water-controller-schedule-card.js');
+fs.writeFileSync(destination, bundle);
+execFileSync(process.execPath, ['--check', destination], { stdio: 'inherit' });
+console.log('Built '+destination+' ('+Buffer.byteLength(bundle)+' bytes)');
