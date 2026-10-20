@@ -1,130 +1,76 @@
-# Home Assistant Smart Water Controller Schedule Card
+# Smart Water Controller Cards
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/hcraveiro/Home-Assistant-Smart-Water-Controller-Schedule-Card.svg)](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller-Schedule-Card/releases/)
+Three Home Assistant dashboard cards bundled in **one HACS JavaScript resource**:
 
-Configure the watering schedule of your Smart Water Controller integration directly from your Home Assistant dashboard.
+- **Overview / Weather** — `custom:irrigation-summary-card` with `mode: overview` or `mode: weather`
+- **Zones** — `custom:irrigation-zones-card`, expandable irrigation zones, manual duration, Start/Stop and connection-aware disabling
+- **Schedule** — `custom:smart-water-controller-schedule-card`, preserving the original schedule editor and Save action
 
-- [Home Assistant Smart Water Controller Schedule Card](#home-assistant-smart-water-controller-schedule-card)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [Header options](#header-options)
-  - [What the card edits](#what-the-card-edits)
-  - [FAQ](#faq)
+The original Schedule Card type and the existing Overview and Zones types are retained for compatibility. All three share the same visual styling. The source code is modular under `src/`, and the distributed bundle remains `smart-water-controller-schedule-card.js`.
 
 ## Installation
 
-This card can be installed through HACS like any other Lovelace card.
+Install or update this repository as a HACS dashboard frontend repository **only after a release is published**. HACS installs the root `smart-water-controller-schedule-card.js` file. Do not register duplicate /local resources containing the same card definitions.
 
-Alternatively, you can manually download the `.js` file from the repository, place it in your `www` folder, and add it as a dashboard resource:
+For side-by-side testing of the development branch without changing the stable HACS installation, follow [TESTING.md](TESTING.md). The `-dev` card tags are intentionally different.
 
+## Examples
+
+Overview:
 ```yaml
-resources:
-  - url: /local/smart-water-controller-schedule-card.js
-    type: module
+type: custom:irrigation-summary-card
+mode: overview
 ```
 
-When installed through HACS, restart Home Assistant so the card becomes available.
-
-## Configuration
-
-To use this card, you must already have the [Smart Water Controller](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller) integration installed and at least one configured controller.
-
-Add one card per controller as a manual card:
-
+Weather:
 ```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.<config_entry_name>_controller_status
+type: custom:irrigation-summary-card
+mode: weather
 ```
 
-Example:
-
+Zones:
 ```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
+type: custom:irrigation-zones-card
+duration: number.rainbird_irrigation_manual_duration
+end_time: sensor.rainbird_irrigation_end_time
+stop: button.rainbird_stop_sprinkle
+show_global_stop: true
+connection_switches:
+  - switch.rain_bird_sprinkler_1
+  - switch.rain_bird_sprinkler_2
+  - switch.rain_bird_sprinkler_3
+zones:
+  - name: Front Lawn 1
+    status: sensor.rainbird_front_lawn_status_1
+    today: sensor.rainbird_sprinkle_total_amount_today_front_lawn
+    planned: sensor.rainbird_forecasted_sprinkle_today_front_lawn
+    remaining: sensor.rainbird_remaining_sprinkle_today_front_lawn
+    start: button.rainbird_sprinkle_front_lawn_1
+    valve: switch.rain_bird_sprinkler_1
 ```
+Add the other zones using their corresponding status, today, planned, remaining, start, and valve entities.
 
-## Header options
-
-The card supports an optional header.
-
-By default, the header is hidden:
-
-```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
-```
-
-To show the header using the controller entity friendly name:
-
+Schedule:
 ```yaml
 type: custom:smart-water-controller-schedule-card
 sensor: sensor.rainbird_controller_status
-header: true
+header: false
 ```
 
-To show the header with a custom title:
+## Schedule functionality
 
-```yaml
-type: custom:smart-water-controller-schedule-card
-sensor: sensor.rainbird_controller_status
-header: true
-title: Irrigation Schedule
-```
+The Schedule Card supports month selection, interval days, scheduled times, station-specific durations and saving to the Smart Water Controller integration. Saving changes the *real* controller schedule.
 
-### Header behaviour
+## Build and development
 
-- `header` is optional and defaults to `false`
-- when `header: true` and `title` is set, the custom title is shown
-- when `header: true` and `title` is not set, the entity `friendly_name` is shown
-- if no `friendly_name` is available, the card falls back to `Irrigation schedule`
+Run `node scripts/build.js` from the repository root. The build checks source syntax, assembles the single resource and checks the resulting JavaScript.
 
-## What the card edits
+See [TESTING.md](TESTING.md) for isolated testing before publishing. This branch is pre-release work; **do not merge to main until the HACS package installation is tested**.
 
-The card allows you to configure the monthly watering schedule for the selected controller.
+## Upgrade from standalone scripts
 
-For each month, you can configure:
+After installing and verifying a released unified HACS bundle, remove only the redundant `/local/irrigation-summary-card.js`, `/local/irrigation-zones-card.js`, and `/local/irrigation-schedule-style.js` entries from Dashboard Resources. Keep one bundled resource and your existing card YAML. Do not delete the local files until you have confirmed a clean reload.
 
-- **Interval between sprinkles**  
-  The number of days between watering cycles.
+## Compatibility
 
-- **Scheduled times**  
-  One or more times for each watering day in that month.
-
-- **Sprinkle time per station**  
-  The watering duration in minutes for each station.
-
-If your Smart Water Controller integration has station names configured, the card will display those names instead of generic labels such as `Station 1`, `Station 2`, etc.
-
-After making changes, click **Save** to persist the updated schedule in the Smart Water Controller integration.
-
-## FAQ
-
-### Do I need one card per controller?
-
-Yes.  
-Each card is linked to a single controller status sensor.
-
-### Can I hide the title?
-
-Yes.  
-The header is hidden by default. Only set `header: true` if you want it shown.
-
-### Can I use a custom title?
-
-Yes.  
-Set both:
-
-```yaml
-header: true
-title: Irrigation Schedule
-```
-
-### Why do I see `Station 1` / `Station 2` instead of custom station names?
-
-The card shows custom station names when they are exposed by the Smart Water Controller integration on the controller status sensor attributes.
-
-### Do I need to save after editing?
-
-Yes.  
-Changes made in the card are only persisted after clicking **Save**.
+Home Assistant frontend versions must support JavaScript custom elements and CSS `color-mix()`. The existing entity IDs are supplied in YAML and can be adapted to other Smart Water Controller installations.
