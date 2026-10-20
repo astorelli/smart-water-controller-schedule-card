@@ -1,32 +1,37 @@
-# Test the unified cards without replacing HACS
+# Testing and release verification
 
-The existing HACS installation on main remains unchanged. This development bundle registers *different* card names, so it can coexist with production resources.
+## Side-by-side testing from a development branch
 
-## Download
-Download `smart-water-controller-cards-test.js` from this branch's GitHub **Raw** link, then copy to `/config/www/smart-water-controller-cards-test.js`.
+The branch includes `smart-water-controller-cards-test.js` (and an Android-friendly `.txt` copy). It registers **different** custom-element names so it can coexist with HACS:
 
-Add one dashboard resource:
-`/local/smart-water-controller-cards-test.js?v=1` (JavaScript module).
+- `custom:irrigation-summary-card-dev`
+- `custom:irrigation-zones-card-dev`
+- `custom:smart-water-controller-schedule-card-dev`
 
-**Do not replace the existing HACS resource and do not remove the existing /local/ irrigation scripts while testing.**
+1. Place the test JavaScript in `/config/www/`.
+2. Register `/local/smart-water-controller-cards-test.js?v=2` as a JavaScript module.
+3. Duplicate the existing irrigation view and change only the three card types above.
+4. Keep the original sensor and entity configurations; test both views.
 
-## Test dashboard (duplicate view, do not replace working view)
-Make a copy of the `Utilities / irri` view and change the card types only:
-- `custom:irrigation-summary-card` -> `custom:irrigation-summary-card-dev` (for both overview and weather)
-- `custom:irrigation-zones-card` -> `custom:irrigation-zones-card-dev`
-- `custom:smart-water-controller-schedule-card` -> `custom:smart-water-controller-schedule-card-dev`
+Saving the test Schedule Card **does modify the real schedule**, just as the production card does.
 
-Keep all entities, schedule sensor and other YAML unchanged.
+## Validation completed for v2.0.0-beta.1
 
-## Verify
-1. All three card types render; Overview and Weather expand correctly.
-2. Zone start/stop controls obey connection switch availability.
-3. Manual minutes update and sync.
-4. Schedule month navigation, intervals, add/remove time and station minutes work.
-5. Only after reviewing edits, press Save and verify persisted schedule through the original card.
+- Schedule edits saved in the new card appeared in the original card.
+- Schedule edits saved in the original card appeared in the new card.
+- Irrigation was started and the zone cards reacted as expected.
+- Android/mobile card interaction worked.
+- A desktop repeated-click issue was diagnosed as excess rerendering on unrelated Home Assistant updates; a revised bundle resolved the observed problem.
+- Beta downloaded via HACS.
+- The existing `Utilities / irri` view worked with just the unified HACS resource; redundant standalone JavaScript resource entries were removed.
 
-This is a development build, not a GitHub Release or HACS-installable prerelease. It is intentionally served from /local to keep HACS stable.
+## Release workflow
 
-## Build
-Run `node scripts/build.js` for production build in an isolated checkout.
-The test bundle uses -dev tag names specifically to avoid duplicate custom-element registration.
+1. Work in `feature/unified-water-controller-cards`.
+2. Run `node scripts/build.js`, commit the generated `smart-water-controller-schedule-card.js`, and check that source and bundle are in sync.
+3. Test a prerelease by creating a GitHub Release tag targeting the development branch, marking it as a prerelease.
+4. Test the version in HACS on a real Home Assistant instance and check Dashboard Resources for duplicate registrations.
+5. Review the PR, merge to `main`, and create the stable `v2.0.0` release targeting `main`.
+6. Verify HACS offers the stable release and the existing YAML still works.
+
+The `-dev` bundle is for development only; it is not the distributable HACS file.
