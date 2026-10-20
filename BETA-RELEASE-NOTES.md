@@ -1,20 +1,26 @@
 # v2.0.0-beta.1 — Unified Smart Water Controller Cards
 
-**Pre-release for testing.** Create the GitHub release with tag `v2.0.0-beta.1` targeting `feature/unified-water-controller-cards`, not main.
-
 ## Included
-- Existing schedule editor, original card tag and original save service
-- Overview and Weather cards, expandable detailed weather values
-- Expandable Zone card, duration controls, Start/Stop, global Stop, countdown
-- Disable zone commands when any configured RainBird switch is unavailable or unknown
-- Visual alignment across all three cards
-- Fix desktop clicks lost to unrelated Home Assistant state updates
 
-## Compatibility
-Existing `custom:smart-water-controller-schedule-card`, `custom:irrigation-summary-card`, and `custom:irrigation-zones-card` YAML remains unchanged. Install only one bundled JS resource after migrating from /local resources.
+- Schedule editor retained, including monthly configuration and real Save action
+- Overview and Weather cards, including expandable detail
+- Expandable Zones, manual duration, Start/Stop, Stop All, countdown and related sensors
+- Disable zone controls when any configured RainBird switch is unavailable or unknown
+- Harmonized styling across all three card types
+- Fix desktop clicks previously lost to unrelated Home Assistant state updates
 
-## Verification
-Side-by-side tests confirmed schedule edits synchronize and zone control behavior. Desktop intermittent click issue was fixed and retested. HACS pre-release installation and resource migration are not yet verified.
+## Verified in Home Assistant
+
+The prerelease was downloaded through HACS. The `Utilities / irri` dashboard successfully loaded the three cards after old standalone JavaScript Resource entries were removed. Schedule changes synchronized between the older and unified Schedule Card in both directions; watering controls and mobile interactions were tested; desktop button clicks worked consistently after the rerender fix.
+
+## Upgrade
+
+The HACS resource is still `smart-water-controller-schedule-card.js`. All three existing card type names are preserved. Remove old `/local/` Overview, Zones and Schedule styling Resource entries, as well as the `-dev` test resource, after installation. Retain backups until satisfied.
 
 ## Rollback
-Keep the stable installation until beta verification completes. Remove beta resource and restore old HACS resource/local JavaScript entries if needed.
+
+Use HACS **Redownload** to select a previous release and reload the frontend. If that release contains only the Schedule Card, restore the separate Overview and Zones scripts as needed.
+
+## Release status
+
+This file documents the successful beta test. The stable `v2.0.0` release should be created **after** merging the development Pull Request into `main`.
