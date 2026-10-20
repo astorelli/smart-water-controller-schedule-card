@@ -183,6 +183,20 @@ class IrrigationSummaryCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    const ids = Object.values(this._config || {})
+      .flatMap(value => Array.isArray(value) ? value : [value])
+      .filter(value => typeof value === 'string' &&
+        /^(sensor|binary_sensor|input_boolean|switch)\./.test(value));
+    const current = ids.map(id => hass?.states?.[id]);
+    if (this._trackedIds?.length === ids.length &&
+        ids.every((id, index) =>
+          id === this._trackedIds[index] &&
+          current[index] === this._trackedEntities[index])) {
+      this.updateLiveText();
+      return;
+    }
+    this._trackedIds = ids;
+    this._trackedEntities = current;
     this.render();
   }
 
@@ -400,7 +414,27 @@ class IrrigationZonesCard extends HTMLElement {
     this.openZone = -1;
     this.render();
   }
-  set hass(value) { this._hass = value; this.render(); }
+  set hass(value) {
+    this._hass = value;
+    const ids = [
+      this.config?.duration, this.config?.end_time, this.config?.stop,
+      ...(this.config?.connection_switches || []),
+      ...(this.config?.zones || []).flatMap(zone => [
+        zone.status, zone.today, zone.planned, zone.remaining, zone.valve
+      ])
+    ].filter(Boolean);
+    const current = ids.map(id => value?.states?.[id]);
+    if (this._trackedIds?.length === ids.length &&
+        ids.every((id, index) =>
+          id === this._trackedIds[index] &&
+          current[index] === this._trackedEntities[index])) {
+      this.updateCountdown();
+      return;
+    }
+    this._trackedIds = ids;
+    this._trackedEntities = current;
+    this.render();
+  }
   connectedCallback() {
     if (!this.timer) this.timer = setInterval(() => this.updateCountdown(), 1000);
   }
