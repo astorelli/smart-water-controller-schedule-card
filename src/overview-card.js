@@ -37,6 +37,20 @@ class IrrigationSummaryCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    const ids = Object.values(this._config || {})
+      .flatMap(value => Array.isArray(value) ? value : [value])
+      .filter(value => typeof value === 'string' &&
+        /^(sensor|binary_sensor|input_boolean|switch)\./.test(value));
+    const current = ids.map(id => hass?.states?.[id]);
+    if (this._trackedIds?.length === ids.length &&
+        ids.every((id, index) =>
+          id === this._trackedIds[index] &&
+          current[index] === this._trackedEntities[index])) {
+      this.updateLiveText();
+      return;
+    }
+    this._trackedIds = ids;
+    this._trackedEntities = current;
     this.render();
   }
 
