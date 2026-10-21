@@ -163,7 +163,11 @@ class IrrigationSummaryCard extends HTMLElement {
       next: 'sensor.rainbird_next_schedule',
       last: 'sensor.rainbird_last_sprinkle',
       end: 'sensor.rainbird_irrigation_end_time',
-      connection: 'input_boolean.rainbird_connection_lost',
+      connection_switches: [
+        'switch.rain_bird_sprinkler_1',
+        'switch.rain_bird_sprinkler_2',
+        'switch.rain_bird_sprinkler_3'
+      ],
       zone_statuses: [
         'sensor.rainbird_front_lawn_status_1',
         'sensor.rainbird_front_lawn_status_2',
@@ -282,11 +286,15 @@ class IrrigationSummaryCard extends HTMLElement {
       <ha-icon icon="mdi:chevron-right"></ha-icon>
     </button>`;
   }
+  connectionLost() {
+    const switches = this._config?.connection_switches || [];
+    return switches.some(id => !this.valid(this.state(id)));
+  }
   renderOverview() {
     const c = this._config;
     const controller = this.state(c.controller);
     const active = c.zone_statuses.some(id => this.state(id).toLowerCase() === 'sprinkling');
-    const lost = this.state(c.connection) === 'on';
+    const lost = this.connectionLost();
     const mode = lost ? 'error' : active ? 'active' : controller.toLowerCase() === 'on' ? 'ready' : 'off';
     const status = lost ? 'Connection lost' : active ? 'Irrigation running' : mode === 'ready' ? 'Irrigation ready' : `Controller ${controller}`;
     const subtitle = lost ? 'Check the RainBird controller' : active ? this.state(c.station) : mode === 'ready' ? 'No active irrigation' : 'Irrigation unavailable';
