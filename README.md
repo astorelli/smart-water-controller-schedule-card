@@ -29,7 +29,45 @@ type: custom:irrigation-summary-card
 mode: overview
 ```
 
-This card defaults to RainBird-specific entities. Override the entity IDs in the card configuration for a different Smart Water Controller installation. The overview's connection banner uses `input_boolean.rainbird_connection_lost` by default; it is a display indicator, **not** the availability condition for zone controls.
+This card defaults to RainBird-specific entities. Override the entity IDs in the card configuration for a different Smart Water Controller installation. The overview connection banner uses integration switch availability, independently of external automations or helpers.
+
+### Explicit entity mapping (recommended)
+
+The Overview and Weather modes support configuring all entity IDs directly. This is especially useful when the controller integration is recreated and entity names change.
+
+```yaml
+type: custom:irrigation-summary-card
+mode: overview
+controller: sensor.rainbird_controller_status
+station: sensor.rainbird_current_irrigation_station
+next: sensor.rainbird_next_schedule
+last: sensor.rainbird_last_sprinkle
+end: sensor.rainbird_irrigation_end_time
+zone_statuses:
+  - sensor.rainbird_front_lawn_status_1
+  - sensor.rainbird_front_lawn_status_2
+  - sensor.rainbird_side_lawn_status
+connection_switches:
+  - switch.rain_bird_sprinkler_1
+  - switch.rain_bird_sprinkler_2
+  - switch.rain_bird_sprinkler_3
+```
+
+The card displays **Connection lost** if *any* configured switch is `unknown`, `unavailable` or missing. It does **not** use `input_boolean.rainbird_connection_lost`; that external helper may remain in unrelated automations. Defaults are retained for existing YAML configurations. Update the IDs after recreating an integration entry if Home Assistant assigned new ones.
+
+Weather entity mapping:
+
+```yaml
+type: custom:irrigation-summary-card
+mode: weather
+raining: binary_sensor.rainbird_is_it_raining_now
+rain_forecast: binary_sensor.rainbird_will_it_rain_today
+rain_today: sensor.rainbird_total_amount_of_rain_today
+forecast_today: sensor.rainbird_total_forecasted_rain_today
+rain_duration: sensor.rainbird_rain_time_today
+last_rain: sensor.rainbird_last_rain
+water: sensor.rainbird_total_water_consumption
+```
 
 ### Weather and Rain
 
