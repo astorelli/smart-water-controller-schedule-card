@@ -30,6 +30,7 @@ class IrrigationScheduleCard extends HTMLElement {
         this._statusTimer = null;
         this._entitySignature = null;
         this._pendingEntitySync = false;
+        this._externalChangePending = false;
 
         this.shadowRoot.addEventListener("focusout", () => {
             window.setTimeout(() => {
@@ -75,8 +76,16 @@ class IrrigationScheduleCard extends HTMLElement {
 
         this._entitySignature = nextSignature;
 
+        // The schedule changed in Home Assistant while the card holds unsaved
+        // edits. The edits are kept, which means saving will overwrite that
+        // change: say so instead of leaving the card showing stale data.
+        if (this._isDirty && this._scheduleDiffersFromLoaded(entity)) {
+            this._externalChangePending = true;
+        }
+
         if (this._hasActiveEditor()) {
             this._pendingEntitySync = true;
+            this._patchNotices();
             return;
         }
 
@@ -199,14 +208,31 @@ class IrrigationScheduleCard extends HTMLElement {
         ) {
             this.scheduleData = JSON.parse(scheduleJson);
             this._lastLoadedScheduleJson = scheduleJson;
+            this._externalChangePending = false;
         }
 
         if (!scheduleJson && force) {
             this.scheduleData = null;
             this._lastLoadedScheduleJson = null;
+            this._externalChangePending = false;
         }
 
         this.render();
+    }
+
+    _scheduleDiffersFromLoaded(entity) {
+        const schedule = entity?.attributes?.schedule;
+
+        return Boolean(schedule) && JSON.stringify(schedule) !== this._lastLoadedScheduleJson;
+    }
+
+    // Throw away the local edits and show what Home Assistant has.
+    _reloadFromEntity() {
+        this._isDirty = false;
+        this._pendingEntitySync = false;
+        this._externalChangePending = false;
+        this._syncFromEntity(true);
+        this._setStatus("Reloaded the schedule from Home Assistant.");
     }
 
     _getMonthSchedule(monthIndex = this.currentMonth) {
@@ -267,7 +293,37 @@ class IrrigationScheduleCard extends HTMLElement {
     }
 
     _markDirty() {
+        const wasDirty = this._isDirty;
         this._isDirty = true;
+
+        if (!wasDirty) {
+            this._patchNotices();
+        }
+    }
+
+    // Show or hide the "unsaved changes" badge, the Reload button and the
+    // outside-change notice in place. Redrawing would take the focus away from
+    // the field being edited, which is when these change.
+    _patchNotices() {
+        const root = this.shadowRoot;
+        const badge = root?.querySelector("[data-role='dirty-badge']");
+
+        if (!badge) {
+            this.render();
+            return;
+        }
+
+        badge.hidden = !this._isDirty;
+
+        const reloadButton = root.querySelector("[data-action='reload-schedule']");
+        if (reloadButton) {
+            reloadButton.hidden = !this._isDirty;
+        }
+
+        const externalNotice = root.querySelector("[data-role='external-notice']");
+        if (externalNotice) {
+            externalNotice.hidden = !this._externalChangePending;
+        }
     }
 
     _formatMonthName(monthIndex) {
@@ -494,7 +550,9 @@ class IrrigationScheduleCard extends HTMLElement {
 
             this._isDirty = false;
             this._pendingEntitySync = false;
+            this._externalChangePending = false;
             this._lastLoadedScheduleJson = JSON.stringify(scheduleArray);
+            this._patchNotices();
             this._setStatus("Schedule saved successfully.", "success");
         } catch (error) {
             this._setStatus(
@@ -528,6 +586,10 @@ class IrrigationScheduleCard extends HTMLElement {
 
         root.querySelector("[data-action='save-schedule']")?.addEventListener("click", () => {
             this._saveSchedule();
+        });
+
+        root.querySelector("[data-action='reload-schedule']")?.addEventListener("click", () => {
+            this._reloadFromEntity();
         });
 
         const intervalInput = root.querySelector("[data-role='interval-days']");
@@ -865,6 +927,93 @@ class IrrigationScheduleCard extends HTMLElement {
                     font-weight: 500;
                 }
 
+                .notice {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-bottom: 14px;
+                    padding: 10px 12px;
+                    border-radius: 12px;
+                    font-size: 13px;
+                    line-height: 1.4;
+                }
+
+                .notice[hidden] {
+                    display: none;
+                }
+
+                .notice ha-icon {
+                    flex: 0 0 auto;
+                    width: 18px;
+                    height: 18px;
+                }
+
+                .notice.warning {
+                    border: 1px solid color-mix(in srgb, var(--warning-color, #fb8c00) 40%, transparent);
+                    background: color-mix(in srgb, var(--warning-color, #fb8c00) 12%, transparent);
+                    color: var(--primary-text-color);
+                }
+
+                .badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 3px 10px;
+                    border-radius: 999px;
+                    font-size: 12px;
+                    font-weight: 500;
+                    background: color-mix(in srgb, var(--warning-color, #fb8c00) 18%, transparent);
+                    color: var(--primary-text-color);
+                    border: 1px solid color-mix(in srgb, var(--warning-color, #fb8c00) 40%, transparent);
+                }
+
+                .badge[hidden] {
+                    display: none;
+                }
+
+                .badge ha-icon {
+                    width: 14px;
+                    height: 14px;
+                }
+
+                .quiet-button {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    min-height: 32px;
+                    padding: 0 12px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 999px;
+                    background: transparent;
+                    color: var(--secondary-text-color);
+                    font: inherit;
+                    font-size: 13px;
+                    font-weight: 500;
+                    cursor: pointer;
+                }
+
+                .quiet-button[hidden] {
+                    display: none;
+                }
+
+                .quiet-button:hover {
+                    background: var(--secondary-background-color);
+                }
+
+                .quiet-button ha-icon {
+                    display: block;
+                    width: 18px;
+                    height: 18px;
+                    margin: 0;
+                }
+
+                .footer-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
                 .footer {
                     display: flex;
                     justify-content: space-between;
@@ -917,8 +1066,12 @@ class IrrigationScheduleCard extends HTMLElement {
                         align-items: stretch;
                     }
 
-                    .save-button {
+                    .footer-actions {
                         width: 100%;
+                    }
+
+                    .save-button {
+                        flex: 1;
                         justify-content: center;
                     }
                 }
@@ -957,6 +1110,14 @@ class IrrigationScheduleCard extends HTMLElement {
                                 <ha-icon icon="mdi:chevron-right"></ha-icon>
                             </span>
                         </button>
+                    </div>
+
+                    <div class="notice warning" data-role="external-notice" ${this._externalChangePending ? "" : "hidden"}>
+                        <ha-icon icon="mdi:alert-outline"></ha-icon>
+                        <span>
+                            The schedule changed in Home Assistant while you were editing.
+                            Saving will overwrite it; use Reload to discard your edits.
+                        </span>
                     </div>
 
                     ${this.scheduleData ? `
@@ -1041,17 +1202,33 @@ class IrrigationScheduleCard extends HTMLElement {
 
                     <div class="footer">
                         <div class="status ${this._status?.type || ""}" data-role="status">${escapeText(this._status?.message || "")}</div>
-                        <button
-                            class="save-button"
-                            type="button"
-                            data-action="save-schedule"
-                            ${this.scheduleData ? "" : "disabled"}
-                        >
-                            <span class="button-icon save-icon">
-                                <ha-icon icon="mdi:content-save"></ha-icon>
+                        <div class="footer-actions">
+                            <span class="badge" data-role="dirty-badge" ${this._isDirty ? "" : "hidden"}>
+                                <ha-icon icon="mdi:pencil-outline"></ha-icon>
+                                <span>Unsaved changes</span>
                             </span>
-                            <span>Save</span>
-                        </button>
+                            <button
+                                class="quiet-button"
+                                type="button"
+                                data-action="reload-schedule"
+                                aria-label="Discard the edits and reload the schedule from Home Assistant"
+                                ${this._isDirty ? "" : "hidden"}
+                            >
+                                <ha-icon icon="mdi:refresh"></ha-icon>
+                                <span>Reload</span>
+                            </button>
+                            <button
+                                class="save-button"
+                                type="button"
+                                data-action="save-schedule"
+                                ${this.scheduleData ? "" : "disabled"}
+                            >
+                                <span class="button-icon save-icon">
+                                    <ha-icon icon="mdi:content-save"></ha-icon>
+                                </span>
+                                <span>Save</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </ha-card>

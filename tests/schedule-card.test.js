@@ -233,3 +233,99 @@ test('the timer that clears the status does not redraw the card either', () => {
   assert.equal(shadow(card).activeElement, input);
   assert.equal(shadow(card).querySelector("[data-role='status']").textContent, '');
 });
+// Edits live in the card until Save. Nothing showed that, and a schedule
+// changed elsewhere while the card held edits was dropped without a word.
+
+const badge = card => shadow(card).querySelector("[data-role='dirty-badge']");
+const externalNotice = card => shadow(card).querySelector("[data-role='external-notice']");
+
+test('unsaved edits are announced without redrawing the field being edited', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  assert.equal(badge(card).hidden, true);
+
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.focus();
+  input.value = '12';
+  fire(window, input, 'input');
+
+  assert.equal(badge(card).hidden, false);
+  assert.equal(shadow(card).querySelector("[data-action='reload-schedule']").hidden, false);
+  assert.equal(shadow(card).querySelector("[data-role='station-minutes']"), input);
+  assert.equal(shadow(card).activeElement, input);
+});
+
+test('the badge disappears once the schedule is saved', async () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.value = '12';
+  fire(window, input, 'input');
+
+  await card._saveSchedule();
+
+  assert.equal(badge(card).hidden, true);
+  assert.equal(shadow(card).querySelector("[data-action='reload-schedule']").hidden, true);
+});
+
+test('a change made elsewhere while editing is announced and the edit is kept', () => {
+  const { card, hass } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.value = '12';
+  fire(window, input, 'input');
+  assert.equal(externalNotice(card).hidden, true);
+
+  const changed = juneSchedule();
+  changed[5].interval_days = 9;
+  hass.states['sensor.solem_controller_status'].attributes.schedule = changed;
+  card.hass = hass;
+
+  assert.equal(externalNotice(card).hidden, false);
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 12, 'the local edit was lost');
+});
+
+test('Reload discards the edits and takes the schedule from Home Assistant', () => {
+  const { card, hass } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.value = '12';
+  fire(window, input, 'input');
+
+  const changed = juneSchedule();
+  changed[5].interval_days = 9;
+  hass.states['sensor.solem_controller_status'].attributes.schedule = changed;
+  card.hass = hass;
+
+  shadow(card).querySelector("[data-action='reload-schedule']").click();
+
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 10);
+  assert.equal(card.scheduleData[5].interval_days, 9);
+  assert.equal(externalNotice(card).hidden, true);
+  assert.equal(badge(card).hidden, true);
+});
+
+test('an outside change while a field has focus is announced without stealing it', () => {
+  const { card, hass } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.focus();
+  input.value = '12';
+  fire(window, input, 'input');
+
+  const changed = juneSchedule();
+  changed[5].interval_days = 9;
+  hass.states['sensor.solem_controller_status'].attributes.schedule = changed;
+  card.hass = hass;
+
+  assert.equal(externalNotice(card).hidden, false);
+  assert.equal(shadow(card).activeElement, input);
+});
+
+test('no outside-change notice when only the schedule we already hold comes back', () => {
+  const { card, hass } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.value = '12';
+  fire(window, input, 'input');
+
+  // The same schedule, with something else on the entity changed.
+  hass.states['sensor.solem_controller_status'].attributes.friendly_name = 'Renamed';
+  card.hass = hass;
+
+  assert.equal(externalNotice(card).hidden, true);
+});
