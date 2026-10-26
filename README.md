@@ -156,6 +156,12 @@ npm run check
 
 `npm run check` is also run by CI. It fails if two clean builds differ, if the bundle does not register all three card elements (`smart-water-controller-schedule-card`, `irrigation-summary-card`, `irrigation-zones-card`), if it is a webpack output instead of the concatenated sources, or if the committed bundle is not what a clean build produces. When adding a card, add its element name to `expectedElements` in `scripts/check-build.js`.
 
+```sh
+npm test
+```
+
+`npm test` runs the schedule card tests in `tests/` with Node's built-in test runner. They load the real `src/smart-water-controller-schedule-card.js` into a jsdom window and drive it the way the Home Assistant frontend does (a `hass` object with the controller sensor, typed input, clicks). Node 20 or newer is enough; `jsdom` is the only dependency. CI runs them on every change to `src/`, `scripts/` or `tests/`.
+
 `npm run watch` runs webpack for the schedule card alone and writes to `dist/` (ignored by git). It never touches the HACS bundle.
 
 See [TESTING.md](TESTING.md) for isolated `-dev` testing, [UNIFIED-CARDS.md](UNIFIED-CARDS.md) for architecture, and [BETA-RELEASE-NOTES.md](BETA-RELEASE-NOTES.md) for prerelease notes.

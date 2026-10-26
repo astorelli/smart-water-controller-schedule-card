@@ -5,6 +5,7 @@ on:
     paths:
       - "src/**"
       - "scripts/**"
+      - "tests/**"
       - "smart-water-controller-schedule-card.js"
       - "package.json"
       - "package-lock.json"
@@ -13,6 +14,7 @@ on:
     paths:
       - "src/**"
       - "scripts/**"
+      - "tests/**"
       - "smart-water-controller-schedule-card.js"
       - "package.json"
       - "package-lock.json"
@@ -39,6 +41,9 @@ jobs:
       # it could never see a stale committed bundle.
       - name: Check the build is complete, deterministic and committed
         run: npm run check
+
+      - name: Run the schedule card tests
+        run: npm test
 
       - name: Build card
         run: npm run build
