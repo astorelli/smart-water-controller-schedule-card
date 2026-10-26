@@ -2,7 +2,7 @@
 // Run with `npm test` (Node's built-in test runner; the only dependency is jsdom).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadWindow, juneSchedule, makeCard, fire } = require('./helpers');
+const { loadWindow, juneSchedule, makeCard, fire, plain } = require('./helpers');
 
 const window = loadWindow();
 test.after(() => window.close());
@@ -85,4 +85,107 @@ test('a configured sensor that does not exist is named as text', () => {
   const placeholder = shadow(card).querySelector('.placeholder');
   assert.match(placeholder.textContent, /sensor\.<i>nope<\/i>/);
   assert.equal(placeholder.querySelectorAll('*').length, 0);
+});
+// A field that is empty while the user retypes it is not a value. Writing it
+// through on every keystroke stored 07:00:00 for a time and 0 for a number.
+
+test('clearing a time field does not store 07:00:00', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const second = shadow(card).querySelectorAll("[data-role='time-slot']")[1];
+
+  second.value = '';
+  fire(window, second, 'input');
+  assert.equal(card.scheduleData[5].hours[1], '21:00:00');
+  assert.equal(card._isDirty, false);
+
+  second.value = '21:45';
+  fire(window, second, 'input');
+  assert.equal(card.scheduleData[5].hours[1], '21:45:00');
+  assert.equal(card._isDirty, true);
+});
+
+test('clearing the interval or the minutes does not reset them to 0', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const interval = shadow(card).querySelector("[data-role='interval-days']");
+  const minutes = shadow(card).querySelector("[data-role='station-minutes']");
+
+  interval.value = '';
+  fire(window, interval, 'input');
+  minutes.value = '';
+  fire(window, minutes, 'input');
+  assert.equal(card.scheduleData[5].interval_days, 2);
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 10);
+
+  interval.value = '3';
+  fire(window, interval, 'input');
+  minutes.value = '12';
+  fire(window, minutes, 'input');
+  assert.equal(card.scheduleData[5].interval_days, 3);
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 12);
+});
+
+test('leaving a field empty puts the stored value back on screen', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const clear = (selector, index = 0) => {
+    const input = shadow(card).querySelectorAll(selector)[index];
+    input.value = '';
+    fire(window, input, 'input');
+    fire(window, input, 'change');
+  };
+
+  clear("[data-role='time-slot']", 1);
+  clear("[data-role='interval-days']");
+  clear("[data-role='station-minutes']");
+
+  assert.equal(shadow(card).querySelectorAll("[data-role='time-slot']")[1].value, '21:00');
+  assert.equal(shadow(card).querySelector("[data-role='interval-days']").value, '2');
+  assert.equal(shadow(card).querySelector("[data-role='station-minutes']").value, '10');
+});
+
+test('a negative number is stored as 0 and shown as 0', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const minutes = shadow(card).querySelector("[data-role='station-minutes']");
+
+  minutes.value = '-4';
+  fire(window, minutes, 'change');
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 0);
+  assert.equal(shadow(card).querySelector("[data-role='station-minutes']").value, '0');
+});
+
+test('the card does not impose upper limits of its own on minutes or days', () => {
+  // What the controller can carry is for the integration and the toolkit to
+  // validate; the card is also used with other controllers.
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const minutes = shadow(card).querySelector("[data-role='station-minutes']");
+  const interval = shadow(card).querySelector("[data-role='interval-days']");
+
+  minutes.value = '5000';
+  fire(window, minutes, 'change');
+  interval.value = '60';
+  fire(window, interval, 'change');
+  assert.equal(card.scheduleData[5].stations.station_1_minutes, 5000);
+  assert.equal(card.scheduleData[5].interval_days, 60);
+});
+
+test('saving refuses a time it cannot read instead of replacing it', async () => {
+  const months = juneSchedule();
+  months[5].hours = ['07:00:00', 'nonsense'];
+  const { card, hass } = makeCard(window, { schedule: months });
+
+  await card._saveSchedule();
+
+  assert.equal(hass.calls.length, 0);
+  assert.equal(card._status.type, 'error');
+  assert.match(card._status.message, /nonsense/);
+  assert.deepEqual(plain(card.scheduleData[5].hours), ['07:00:00', 'nonsense']);
+});
+
+test('saving completes a time written as HH:MM', async () => {
+  const months = juneSchedule();
+  months[5].hours = ['21:30'];
+  const { card, hass } = makeCard(window, { schedule: months });
+
+  await card._saveSchedule();
+
+  assert.deepEqual(plain(hass.calls[0].data.schedule[5].hours), ['21:30:00']);
 });

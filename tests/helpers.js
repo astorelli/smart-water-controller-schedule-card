@@ -58,8 +58,15 @@ function makeCard(window, attributes, config = {}) {
   return { card, hass };
 }
 
+// Arrays and objects built inside the jsdom window have that window's prototypes,
+// which assert.deepEqual (strict) treats as different from Node's own. Compare
+// plain copies.
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function fire(window, element, type) {
   element.dispatchEvent(new window.Event(type, { bubbles: true }));
 }
 
-module.exports = { SENSOR, loadWindow, emptyMonths, juneSchedule, makeHass, makeCard, fire };
+module.exports = { SENSOR, loadWindow, emptyMonths, juneSchedule, makeHass, makeCard, fire, plain };

@@ -278,19 +278,19 @@ class IrrigationScheduleCard extends HTMLElement {
 
     _normalizeTimeForInput(value) {
         if (!value) {
-            return "07:00";
+            return "";
         }
 
         const str = String(value);
         return str.length >= 5 ? str.slice(0, 5) : str;
     }
 
+    // Returns HH:MM:SS, or null when the value is not a time. It used to fall
+    // back to 07:00:00 for anything it did not understand, which turned the
+    // empty value a time field reports while it is being retyped into a stored
+    // 07:00:00.
     _normalizeTimeForStorage(value) {
-        if (!value) {
-            return "07:00:00";
-        }
-
-        const str = String(value).trim();
+        const str = String(value ?? "").trim();
 
         if (/^\d{2}:\d{2}:\d{2}$/.test(str)) {
             return str;
@@ -300,7 +300,7 @@ class IrrigationScheduleCard extends HTMLElement {
             return `${str}:00`;
         }
 
-        return "07:00:00";
+        return null;
     }
 
     _changeMonth(delta) {
@@ -313,10 +313,34 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateIntervalDays(value) {
+    _updateIntervalDays(value, { commit = false } = {}) {
+        const str = String(value ?? "").trim();
+
+        // An empty field is a half-typed number, not a request for 0. Writing it
+        // on every keystroke reset the interval whenever the box was cleared to
+        // retype it. `commit` is true when the field is left (the change event):
+        // redraw so the field shows what is stored.
+        if (str === "") {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        const parsed = parseInt(str, 10);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
         const monthSchedule = this._ensureScheduleData();
-        monthSchedule.interval_days = Math.max(0, parseInt(value, 10) || 0);
+        monthSchedule.interval_days = Math.max(0, parsed);
         this._markDirty();
+
+        if (commit && monthSchedule.interval_days !== parsed) {
+            this.render();
+        }
     }
 
     _addTimeSlot() {
@@ -326,14 +350,26 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateTimeSlot(index, value) {
+    _updateTimeSlot(index, value, { commit = false } = {}) {
         const monthSchedule = this._ensureScheduleData();
 
-        if (!monthSchedule.hours[index] && monthSchedule.hours[index] !== "") {
+        if (!Number.isInteger(index) || index < 0 || index >= monthSchedule.hours.length) {
             return;
         }
 
-        monthSchedule.hours[index] = this._normalizeTimeForStorage(value);
+        const normalized = this._normalizeTimeForStorage(value);
+
+        // A time input reports an empty value while it is being retyped. Keep
+        // the last valid time and, once the field is left, show it again.
+        if (!normalized) {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        monthSchedule.hours[index] = normalized;
         this._markDirty();
     }
 
@@ -349,10 +385,31 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateStationTime(stationKey, value) {
+    _updateStationTime(stationKey, value, { commit = false } = {}) {
+        const str = String(value ?? "").trim();
+
+        // Same as the interval: an empty field is not a request for 0.
+        if (str === "") {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        const parsed = parseInt(str, 10);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
         const monthSchedule = this._ensureScheduleData();
-        monthSchedule.stations[stationKey] = Math.max(0, parseInt(value, 10) || 0);
+        monthSchedule.stations[stationKey] = Math.max(0, parsed);
         this._markDirty();
+
+        if (commit && monthSchedule.stations[stationKey] !== parsed) {
+            this.render();
+        }
     }
 
     _setStatus(message, type = "info") {
@@ -379,6 +436,25 @@ class IrrigationScheduleCard extends HTMLElement {
         if (!this._servicePrefix) {
             this._setStatus("Could not determine the schedule service for this controller.", "error");
             return;
+        }
+
+        // Never store a time the card cannot read. Replacing it with 07:00:00,
+        // as this used to, would change the schedule behind the user's back;
+        // saying so lets them fix it.
+        const months = Array.isArray(this.scheduleData) ? this.scheduleData : [];
+
+        for (let monthIndex = 0; monthIndex < months.length; monthIndex += 1) {
+            const hours = Array.isArray(months[monthIndex]?.hours) ? months[monthIndex].hours : [];
+            const invalid = hours.find((hour) => !this._normalizeTimeForStorage(hour));
+
+            if (invalid !== undefined) {
+                this._setStatus(
+                    `${this._formatMonthName(monthIndex)} has a time that is not valid ` +
+                    `("${invalid}"). Fix or remove it, then save again.`,
+                    "error"
+                );
+                return;
+            }
         }
 
         const scheduleArray = Array.isArray(this.scheduleData)
@@ -444,17 +520,19 @@ class IrrigationScheduleCard extends HTMLElement {
             this._updateIntervalDays(event.target.value);
         });
         intervalInput?.addEventListener("change", (event) => {
-            this._updateIntervalDays(event.target.value);
+            this._updateIntervalDays(event.target.value, { commit: true });
         });
 
         root.querySelectorAll("[data-role='time-slot']").forEach((input) => {
-            const updateHandler = (event) => {
+            input.addEventListener("input", (event) => {
                 const index = Number(event.currentTarget.dataset.index);
                 this._updateTimeSlot(index, event.currentTarget.value);
-            };
+            });
 
-            input.addEventListener("input", updateHandler);
-            input.addEventListener("change", updateHandler);
+            input.addEventListener("change", (event) => {
+                const index = Number(event.currentTarget.dataset.index);
+                this._updateTimeSlot(index, event.currentTarget.value, { commit: true });
+            });
         });
 
         root.querySelectorAll("[data-action='remove-time']").forEach((button) => {
@@ -465,13 +543,15 @@ class IrrigationScheduleCard extends HTMLElement {
         });
 
         root.querySelectorAll("[data-role='station-minutes']").forEach((input) => {
-            const updateHandler = (event) => {
+            input.addEventListener("input", (event) => {
                 const stationKey = event.currentTarget.dataset.stationKey;
                 this._updateStationTime(stationKey, event.currentTarget.value);
-            };
+            });
 
-            input.addEventListener("input", updateHandler);
-            input.addEventListener("change", updateHandler);
+            input.addEventListener("change", (event) => {
+                const stationKey = event.currentTarget.dataset.stationKey;
+                this._updateStationTime(stationKey, event.currentTarget.value, { commit: true });
+            });
         });
     }
 
