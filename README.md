@@ -135,8 +135,8 @@ The `v2.0.0-beta.1` HACS prerelease was installed and the existing `Utilities / 
 
 ## Development
 
-Sources:
-- `src/schedule-card.js`
+Sources (four readable modules, edited directly; there is no minified copy):
+- `src/smart-water-controller-schedule-card.js`
 - `src/schedule-style.js`
 - `src/overview-card.js`
 - `src/zones-card.js`
@@ -144,10 +144,19 @@ Sources:
 Build from the repository root with Node.js:
 
 ```sh
-node scripts/build.js
+npm ci
+npm run build
 ```
 
-This generates `smart-water-controller-schedule-card.js`, the single HACS resource. The script checks individual source files and the bundle with `node --check`.
+This generates `smart-water-controller-schedule-card.js`, the single HACS resource, by concatenating the four modules in that order. The script checks individual source files and the bundle with `node --check`. Commit the regenerated bundle together with the source change.
+
+```sh
+npm run check
+```
+
+`npm run check` is also run by CI. It fails if two clean builds differ, if the bundle does not register all three card elements (`smart-water-controller-schedule-card`, `irrigation-summary-card`, `irrigation-zones-card`), if it is a webpack output instead of the concatenated sources, or if the committed bundle is not what a clean build produces. When adding a card, add its element name to `expectedElements` in `scripts/check-build.js`.
+
+`npm run watch` runs webpack for the schedule card alone and writes to `dist/` (ignored by git). It never touches the HACS bundle.
 
 See [TESTING.md](TESTING.md) for isolated `-dev` testing, [UNIFIED-CARDS.md](UNIFIED-CARDS.md) for architecture, and [BETA-RELEASE-NOTES.md](BETA-RELEASE-NOTES.md) for prerelease notes.
 

@@ -5,6 +5,7 @@
   "description": "Smart Water Controller Schedule Card",
   "scripts": {
     "build": "node scripts/build.js",
+    "check": "node scripts/check-build.js",
     "watch": "webpack --watch --mode=development"
   },
   "repository": {
