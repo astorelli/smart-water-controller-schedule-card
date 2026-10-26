@@ -129,6 +129,19 @@ header: false
 
 To show a heading, use `header: true`. An optional `title: Irrigation Schedule` overrides the friendly name. The card loads the controller schedule from the sensor's attributes, supports month selection, days between cycles, multiple watering times and duration per station. **Save updates the real controller schedule.**
 
+What the editor reads from the sensor's attributes:
+
+| Attribute | Used for | If missing |
+| --- | --- | --- |
+| `schedule` | the twelve months to edit (`hours`, `stations`, `interval_days`) | the card shows "Loading schedule data..." |
+| `service_prefix` | the service to call on Save, `set_irrigation_schedule_<prefix>` | taken from the sensor's entity id when it has the form `sensor.<mac>_...` |
+| `num_stations` | how many station rows to offer, so a month with nothing stored can still be configured | the length of `station_names`, then the highest station stored in the schedule |
+| `station_names` | the labels of the station rows | `Station 1`, `Station 2`, ... |
+
+`num_stations` and `station_names` are published by Smart Water Controller 1.1.3.
+
+While there are unsaved edits the card shows an "Unsaved changes" badge and a Reload button. If the schedule changes in Home Assistant in the meantime, it says so: saving would overwrite that change, and Reload discards your edits instead. A time that is typed twice in a month is flagged, because the integration counts each one as a watering slot of its own.
+
 ## Tested migration
 
 The `v2.0.0-beta.1` HACS prerelease was installed and the existing `Utilities / irri` view rendered all bundled cards successfully with **only the HACS resource enabled**. Schedule edits were verified in both directions between the original and bundled card, zone operation was tested, and the desktop click issue was retested after fixing excessive DOM rerenders. This is a user-tested setup, not an automated end-to-end compatibility guarantee.
