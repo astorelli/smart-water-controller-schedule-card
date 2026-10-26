@@ -139,6 +139,7 @@ class IrrigationScheduleCard extends HTMLElement {
             service_prefix: this._extractServicePrefix(entity),
             schedule: entity?.attributes?.schedule ?? null,
             station_names: entity?.attributes?.station_names ?? null,
+            num_stations: entity?.attributes?.num_stations ?? null,
             header: Boolean(this._config?.header),
             title: this._getHeaderTitle(),
         });
@@ -184,6 +185,58 @@ class IrrigationScheduleCard extends HTMLElement {
         return String(stationKey)
             .replace("_minutes", "")
             .replace("station_", "Station ");
+    }
+
+    // How many stations to offer a row for. Taken from what the integration
+    // publishes on the sensor, not from the minutes stored for the current
+    // month: a month with nothing stored showed no row at all and could never
+    // be configured from the card.
+    _getStationCount() {
+        const attrs = this._getEntity()?.attributes ?? {};
+        const declared = Number(attrs.num_stations);
+
+        if (Number.isInteger(declared) && declared > 0) {
+            return declared;
+        }
+
+        if (Array.isArray(attrs.station_names) && attrs.station_names.length > 0) {
+            return attrs.station_names.length;
+        }
+
+        // Last resort, for an integration that publishes neither: the highest
+        // station stored anywhere in the schedule.
+        let highest = 0;
+        const months = Array.isArray(this.scheduleData) ? this.scheduleData : [];
+
+        months.forEach((monthSchedule) => {
+            Object.keys(monthSchedule?.stations ?? {}).forEach((stationKey) => {
+                const match = String(stationKey).match(/^station_(\d+)_minutes$/);
+
+                if (match) {
+                    highest = Math.max(highest, Number(match[1]));
+                }
+            });
+        });
+
+        return highest;
+    }
+
+    // Every station of the controller, plus any other key already stored for
+    // the month, so nothing in the schedule is hidden from the editor.
+    _getStationKeys(monthSchedule) {
+        const keys = new Set();
+
+        for (let stationId = 1; stationId <= this._getStationCount(); stationId += 1) {
+            keys.add(`station_${stationId}_minutes`);
+        }
+
+        Object.keys(monthSchedule.stations || {}).forEach((stationKey) => keys.add(stationKey));
+
+        return [...keys].sort((a, b) => {
+            const aNum = parseInt(String(a).replace(/\D/g, ""), 10) || 0;
+            const bNum = parseInt(String(b).replace(/\D/g, ""), 10) || 0;
+            return aNum - bNum;
+        });
     }
 
     _syncFromEntity(force = false) {
@@ -640,11 +693,10 @@ class IrrigationScheduleCard extends HTMLElement {
         const entity = this._getEntity();
         const monthSchedule = this._getMonthSchedule();
         const monthName = this._formatMonthName(this.currentMonth);
-        const stationEntries = Object.entries(monthSchedule.stations || {}).sort((a, b) => {
-            const aNum = parseInt(String(a[0]).replace(/\D/g, ""), 10) || 0;
-            const bNum = parseInt(String(b[0]).replace(/\D/g, ""), 10) || 0;
-            return aNum - bNum;
-        });
+        const stationEntries = this._getStationKeys(monthSchedule).map((stationKey) => [
+            stationKey,
+            monthSchedule.stations?.[stationKey] ?? 0,
+        ]);
         const showHeader = this._shouldShowHeader();
         const headerTitle = this._getHeaderTitle();
 
@@ -1042,6 +1094,12 @@ class IrrigationScheduleCard extends HTMLElement {
                     cursor: default;
                 }
 
+                .empty-hint {
+                    margin: 0;
+                    color: var(--secondary-text-color);
+                    font-size: 13px;
+                }
+
                 .placeholder {
                     padding: 18px 0 6px;
                     color: var(--secondary-text-color);
@@ -1177,6 +1235,9 @@ class IrrigationScheduleCard extends HTMLElement {
                             <p class="section-description">Set the watering duration in minutes for each station in ${escapeText(monthName)}.</p>
 
                             <div class="station-list">
+                                ${stationEntries.length === 0 ? `
+                                    <p class="empty-hint">No stations reported by the integration yet.</p>
+                                ` : ""}
                                 ${stationEntries.map(([stationKey, minutes]) => `
                                     <div class="station-row">
                                         <div class="station-label">${escapeText(this._getStationLabel(stationKey))}</div>

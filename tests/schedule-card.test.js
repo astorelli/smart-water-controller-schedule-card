@@ -2,7 +2,7 @@
 // Run with `npm test` (Node's built-in test runner; the only dependency is jsdom).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadWindow, juneSchedule, makeCard, fire, plain } = require('./helpers');
+const { loadWindow, emptyMonths, juneSchedule, makeCard, fire, plain } = require('./helpers');
 
 const window = loadWindow();
 test.after(() => window.close());
@@ -328,4 +328,84 @@ test('no outside-change notice when only the schedule we already hold comes back
   card.hass = hass;
 
   assert.equal(externalNotice(card).hidden, true);
+});
+// The rows used to be the keys stored for the month. A month with nothing
+// stored showed no station at all, so it could never be configured here.
+// The integration publishes num_stations and station_names on the sensor.
+
+const stationRows = card => [...shadow(card).querySelectorAll("[data-role='station-minutes']")];
+const stationLabels = card =>
+  [...shadow(card).querySelectorAll('.station-label')].map(node => node.textContent.trim());
+
+test('an empty month still offers one row per station of the controller', () => {
+  const { card } = makeCard(window, {
+    schedule: emptyMonths(),
+    num_stations: 2,
+    station_names: ['ZEN', 'BBQ']
+  });
+
+  assert.deepEqual(stationRows(card).map(input => input.dataset.stationKey), [
+    'station_1_minutes',
+    'station_2_minutes'
+  ]);
+  assert.deepEqual(stationRows(card).map(input => input.value), ['0', '0']);
+  assert.deepEqual(stationLabels(card), ['ZEN', 'BBQ']);
+});
+
+test('without station names the rows get generic labels', () => {
+  const { card } = makeCard(window, { schedule: emptyMonths(), num_stations: 2 });
+
+  assert.deepEqual(stationLabels(card), ['Station 1', 'Station 2']);
+});
+
+test('the station count falls back to the names, then to the stored schedule', () => {
+  const byNames = makeCard(window, { schedule: emptyMonths(), station_names: ['A', 'B', 'C'] });
+  assert.equal(stationRows(byNames.card).length, 3);
+
+  const byStored = makeCard(window, { schedule: juneSchedule() });
+  assert.equal(stationRows(byStored.card).length, 2);
+});
+
+test('typing minutes into a row that was never stored saves that station', async () => {
+  const { card, hass } = makeCard(window, {
+    schedule: emptyMonths(),
+    num_stations: 2,
+    station_names: ['ZEN', 'BBQ']
+  });
+
+  const second = stationRows(card)[1];
+  second.value = '7';
+  fire(window, second, 'input');
+  await card._saveSchedule();
+
+  assert.deepEqual(plain(hass.calls[0].data.schedule[5].stations), { station_2_minutes: 7 });
+});
+
+test('a stored station beyond the reported count is still shown', () => {
+  const months = juneSchedule();
+  months[5].stations.station_3_minutes = 4;
+  const { card } = makeCard(window, { schedule: months, num_stations: 2 });
+
+  assert.deepEqual(stationRows(card).map(input => input.dataset.stationKey), [
+    'station_1_minutes',
+    'station_2_minutes',
+    'station_3_minutes'
+  ]);
+});
+
+test('with no station known anywhere the card says so instead of showing nothing', () => {
+  const { card } = makeCard(window, { schedule: emptyMonths() });
+
+  assert.equal(stationRows(card).length, 0);
+  assert.match(shadow(card).querySelector('.empty-hint').textContent, /No stations/);
+});
+
+test('the card redraws when the number of stations changes', () => {
+  const { card, hass } = makeCard(window, { schedule: emptyMonths(), num_stations: 2 });
+  assert.equal(stationRows(card).length, 2);
+
+  hass.states['sensor.solem_controller_status'].attributes.num_stations = 3;
+  card.hass = hass;
+
+  assert.equal(stationRows(card).length, 3);
 });
