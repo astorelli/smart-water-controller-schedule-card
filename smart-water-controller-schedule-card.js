@@ -14,6 +14,125 @@ function escapeAttribute(value) {
         .replace(/'/g, "&#39;");
 }
 
+function toMidnight(value) {
+    if (!value) {
+        return null;
+    }
+
+    const date = value instanceof Date ? value : new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function daysBetween(from, to) {
+    return Math.round((to.getTime() - from.getTime()) / 86400000);
+}
+
+// Which days of a month water, and how much of that is a fact.
+//
+// `interval_days` is not a grid on the calendar. Smart Water Controller blocks
+// a day when fewer than `interval_days` have passed since the later of the last
+// rain and the last sprinkle (ScheduleStateManager.recent_event_blocks_today),
+// so rain resets the countdown: "every 2 days" means "two days after the ground
+// last got wet", not "even days". Every future day is therefore a projection at
+// unchanged weather, and this function keeps that distinction explicit:
+//
+//   - days before today are never marked. With only the latest anchor and no
+//     history, an old anchor would otherwise paint weeks of waterings that
+//     never happened;
+//   - today comes from the integration's own verdict (`blockedToday`) when it
+//     is known, instead of being re-derived here, so the card cannot disagree
+//     with the scheduler about the one day that is already decided;
+//   - the rest is chained forward, each projected day becoming the next anchor.
+//
+// `mode` says which of the two readings the caller is showing: "projected" when
+// anchored on real data for the month we are actually in, "pattern" when it is
+// just the shape of the rule applied from the 1st (any other month, or no
+// anchor published), where anchoring would be arithmetic dressed up as a
+// forecast.
+function projectWateringDays({
+    year,
+    monthIndex,
+    hours,
+    intervalDays,
+    anchor = null,
+    today = new Date(),
+    blockedToday = null,
+}) {
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const step = Math.max(1, Number(intervalDays) || 0);
+    const waterHours = Array.isArray(hours) ? hours.filter(Boolean) : [];
+    const midnightToday = toMidnight(today);
+    const anchorDay = toMidnight(anchor);
+
+    const isThisMonth =
+        midnightToday.getFullYear() === year && midnightToday.getMonth() === monthIndex;
+    const mode = isThisMonth && anchorDay ? "projected" : "pattern";
+
+    const days = Array.from({ length: daysInMonth }, (_, index) => {
+        const day = index + 1;
+        const date = new Date(year, monthIndex, day);
+        const delta = daysBetween(midnightToday, date);
+
+        return {
+            day,
+            weekday: date.getDay(),
+            isToday: isThisMonth && delta === 0,
+            isPast: delta < 0,
+            waters: false,
+            blocked: false,
+        };
+    });
+
+    if (!waterHours.length) {
+        return { mode, days, hours: waterHours, intervalDays: step, daysInMonth };
+    }
+
+    // In "pattern" mode the 1st is the reference, so put the virtual previous
+    // watering exactly one interval before it.
+    let lastWet = mode === "projected"
+        ? anchorDay
+        : new Date(year, monthIndex, 1 - step);
+
+    days.forEach((entry) => {
+        const date = new Date(year, monthIndex, entry.day);
+
+        // The past is not ours to claim, and treating it as an anchor would push
+        // the real projection out of phase.
+        if (entry.isPast && mode === "projected") {
+            return;
+        }
+
+        // Today is already decided by the scheduler. This also covers the case
+        // the arithmetic gets wrong on its own: the ground got wet earlier
+        // *today* and the remaining slots still run, because an event from
+        // today does not block today.
+        if (entry.isToday && typeof blockedToday === "boolean") {
+            entry.blocked = blockedToday;
+            entry.waters = !blockedToday;
+
+            if (entry.waters) {
+                lastWet = date;
+            }
+
+            return;
+        }
+
+        if (daysBetween(lastWet, date) < step) {
+            return;
+        }
+
+        entry.waters = true;
+        lastWet = date;
+    });
+
+    return { mode, days, hours: waterHours, intervalDays: step, daysInMonth };
+}
+
 class IrrigationScheduleCard extends HTMLElement {
     constructor() {
         super();
