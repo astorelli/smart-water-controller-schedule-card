@@ -5,6 +5,8 @@ module.exports = {
   mode: 'production',
   output: {
     filename: 'smart-water-controller-schedule-card.js',
-    path: path.resolve(__dirname)
+    // dist/, not the repository root: the root file is the four-card HACS bundle
+    // that scripts/build.js writes, and webpack only knows the schedule card.
+    path: path.resolve(__dirname, 'dist')
   }
 };
