@@ -37,3 +37,52 @@ test('saving sends all twelve months to the controller-specific service', async 
   assert.equal(hass.calls[0].data.schedule.length, 12);
   assert.equal(hass.calls[0].data.schedule[5].stations.station_1_minutes, 12);
 });
+
+// Station names, the title, entity ids and error messages all come from Home
+// Assistant or from the dashboard YAML and were interpolated into innerHTML.
+
+test('station names and the title are shown as text, not interpreted as markup', () => {
+  const { card } = makeCard(
+    window,
+    { schedule: juneSchedule(), station_names: ['Zona "Nord" <b>x</b>', 'BBQ'] },
+    { header: true, title: '<img src=x onerror=alert(1)>' }
+  );
+
+  const label = shadow(card).querySelector('.station-label');
+  assert.equal(label.textContent.trim(), 'Zona "Nord" <b>x</b>');
+  assert.equal(label.querySelectorAll('*').length, 0);
+
+  const title = shadow(card).querySelector('.card-header-title .name');
+  assert.equal(title.textContent.trim(), '<img src=x onerror=alert(1)>');
+  assert.equal(title.querySelectorAll('*').length, 0);
+});
+
+test('quotes in stored keys and times cannot break out of an attribute', () => {
+  const months = juneSchedule();
+  months[5].stations = { 'station_1_minutes" data-injected="1': 3 };
+  months[5].hours = ['"><img src=x>'];
+  const { card } = makeCard(window, { schedule: months });
+
+  assert.equal(shadow(card).querySelectorAll('[data-injected]').length, 0);
+  assert.equal(shadow(card).querySelectorAll('img').length, 0);
+});
+
+test('a status message is shown as text', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  card._setStatus('<b>boom</b>', 'error');
+
+  const status = shadow(card).querySelector('.status');
+  assert.equal(status.textContent, '<b>boom</b>');
+  assert.equal(status.querySelectorAll('*').length, 0);
+});
+
+test('a configured sensor that does not exist is named as text', () => {
+  const card = new (window.customElements.get('smart-water-controller-schedule-card'))();
+  window.document.body.appendChild(card);
+  card.setConfig({ sensor: 'sensor.<i>nope</i>' });
+  card.hass = { states: {}, callService() {} };
+
+  const placeholder = shadow(card).querySelector('.placeholder');
+  assert.match(placeholder.textContent, /sensor\.<i>nope<\/i>/);
+  assert.equal(placeholder.querySelectorAll('*').length, 0);
+});

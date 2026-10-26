@@ -1,3 +1,19 @@
+// Station names, the title, entity ids and error messages come from Home
+// Assistant or from the dashboard YAML. They are interpolated into innerHTML
+// below, so they must be escaped or a name like `<img onerror=...>` would run.
+function escapeText(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+function escapeAttribute(value) {
+    return escapeText(value)
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 class IrrigationScheduleCard extends HTMLElement {
     constructor() {
         super();
@@ -818,7 +834,7 @@ class IrrigationScheduleCard extends HTMLElement {
                     ${showHeader ? `
                         <div class="card-header">
                             <div class="card-header-title">
-                                <div class="name">${headerTitle}</div>
+                                <div class="name">${escapeText(headerTitle)}</div>
                             </div>
                         </div>
                     ` : ""}
@@ -834,7 +850,7 @@ class IrrigationScheduleCard extends HTMLElement {
                             <select class="month-select" data-role="month-select" aria-label="Month">
                                 ${Array.from({ length: 12 }, (_, index) => `
                                     <option value="${index}" ${index === this.currentMonth ? "selected" : ""}>
-                                        ${this._formatMonthName(index)}
+                                        ${escapeText(this._formatMonthName(index))}
                                     </option>
                                 `).join("")}
                             </select>
@@ -851,14 +867,14 @@ class IrrigationScheduleCard extends HTMLElement {
                     ${this.scheduleData ? `
                         <section class="section">
                             <h3 class="section-title">Interval between sprinkles</h3>
-                            <p class="section-description">Number of days between watering cycles for ${monthName}.</p>
+                            <p class="section-description">Number of days between watering cycles for ${escapeText(monthName)}.</p>
                             <input
                                 class="field"
                                 type="number"
                                 min="0"
                                 step="1"
                                 inputmode="numeric"
-                                value="${monthSchedule.interval_days}"
+                                value="${escapeAttribute(monthSchedule.interval_days)}"
                                 data-role="interval-days"
                             >
                         </section>
@@ -873,7 +889,7 @@ class IrrigationScheduleCard extends HTMLElement {
                                         <input
                                             class="time-field"
                                             type="time"
-                                            value="${this._normalizeTimeForInput(hour)}"
+                                            value="${escapeAttribute(this._normalizeTimeForInput(hour))}"
                                             data-role="time-slot"
                                             data-index="${index}"
                                         >
@@ -882,7 +898,7 @@ class IrrigationScheduleCard extends HTMLElement {
                                             type="button"
                                             data-action="remove-time"
                                             data-index="${index}"
-                                            aria-label="Remove time ${this._normalizeTimeForInput(hour)}"
+                                            aria-label="Remove time ${escapeAttribute(this._normalizeTimeForInput(hour))}"
                                         >
                                             <span class="button-icon danger-icon">
                                                 <ha-icon icon="mdi:close"></ha-icon>
@@ -902,21 +918,21 @@ class IrrigationScheduleCard extends HTMLElement {
 
                         <section class="section">
                             <h3 class="section-title">Sprinkle time per station</h3>
-                            <p class="section-description">Set the watering duration in minutes for each station in ${monthName}.</p>
+                            <p class="section-description">Set the watering duration in minutes for each station in ${escapeText(monthName)}.</p>
 
                             <div class="station-list">
                                 ${stationEntries.map(([stationKey, minutes]) => `
                                     <div class="station-row">
-                                        <div class="station-label">${this._getStationLabel(stationKey)}</div>
+                                        <div class="station-label">${escapeText(this._getStationLabel(stationKey))}</div>
                                         <input
                                             class="field"
                                             type="number"
                                             min="0"
                                             step="1"
                                             inputmode="numeric"
-                                            value="${minutes}"
+                                            value="${escapeAttribute(minutes)}"
                                             data-role="station-minutes"
-                                            data-station-key="${stationKey}"
+                                            data-station-key="${escapeAttribute(stationKey)}"
                                         >
                                     </div>
                                 `).join("")}
@@ -924,12 +940,12 @@ class IrrigationScheduleCard extends HTMLElement {
                         </section>
                     ` : `
                         <div class="placeholder">
-                            ${entity ? "Loading schedule data..." : `Entity not found: ${this.sensor}`}
+                            ${entity ? "Loading schedule data..." : `Entity not found: ${escapeText(this.sensor)}`}
                         </div>
                     `}
 
                     <div class="footer">
-                        <div class="status ${this._status?.type || ""}">${this._status?.message || ""}</div>
+                        <div class="status ${this._status?.type || ""}">${escapeText(this._status?.message || "")}</div>
                         <button
                             class="save-button"
                             type="button"
