@@ -189,3 +189,47 @@ test('saving completes a time written as HH:MM', async () => {
 
   assert.deepEqual(plain(hass.calls[0].data.schedule[5].hours), ['21:30:00']);
 });
+// Every render() replaces the whole shadow DOM. A status message (the save
+// confirmation, and the timer that clears it) used to call render(), which
+// threw away the field the user was typing in.
+
+test('a status message keeps the focused field and the typed text', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+  input.focus();
+  input.value = '17';
+  fire(window, input, 'input');
+
+  card._setStatus('Saved.', 'success');
+
+  const after = shadow(card).querySelector("[data-role='station-minutes']");
+  assert.equal(after, input, 'the input element was replaced');
+  assert.equal(shadow(card).activeElement, input);
+  assert.equal(after.value, '17');
+  assert.equal(shadow(card).querySelector("[data-role='status']").textContent, 'Saved.');
+});
+
+test('the timer that clears the status does not redraw the card either', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const input = shadow(card).querySelector("[data-role='station-minutes']");
+
+  const original = window.setTimeout;
+  let clear;
+  window.setTimeout = callback => {
+    clear = callback;
+    return 1;
+  };
+
+  try {
+    card._setStatus('Saved.', 'success');
+  } finally {
+    window.setTimeout = original;
+  }
+
+  input.focus();
+  clear();
+
+  assert.equal(shadow(card).querySelector("[data-role='station-minutes']"), input);
+  assert.equal(shadow(card).activeElement, input);
+  assert.equal(shadow(card).querySelector("[data-role='status']").textContent, '');
+});

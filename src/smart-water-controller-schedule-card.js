@@ -421,10 +421,25 @@ class IrrigationScheduleCard extends HTMLElement {
 
         this._statusTimer = setTimeout(() => {
             this._status = null;
-            this.render();
+            this._patchStatus();
         }, 3500);
 
-        this.render();
+        this._patchStatus();
+    }
+
+    // Update the status line in place. Every render() replaces the whole shadow
+    // DOM, so redrawing for a status message - or for the timer that clears it a
+    // few seconds later - took the focus away from the field being typed into.
+    _patchStatus() {
+        const node = this.shadowRoot?.querySelector("[data-role='status']");
+
+        if (!node) {
+            this.render();
+            return;
+        }
+
+        node.className = `status ${this._status?.type || ""}`;
+        node.textContent = this._status?.message || "";
     }
 
     async _saveSchedule() {
@@ -1025,7 +1040,7 @@ class IrrigationScheduleCard extends HTMLElement {
                     `}
 
                     <div class="footer">
-                        <div class="status ${this._status?.type || ""}">${escapeText(this._status?.message || "")}</div>
+                        <div class="status ${this._status?.type || ""}" data-role="status">${escapeText(this._status?.message || "")}</div>
                         <button
                             class="save-button"
                             type="button"
