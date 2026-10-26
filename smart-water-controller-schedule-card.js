@@ -150,6 +150,7 @@ class IrrigationScheduleCard extends HTMLElement {
         this._entitySignature = null;
         this._pendingEntitySync = false;
         this._externalChangePending = false;
+        this._copyConfirm = null;
 
         this.shadowRoot.addEventListener("focusout", () => {
             window.setTimeout(() => {
@@ -215,8 +216,9 @@ class IrrigationScheduleCard extends HTMLElement {
     getCardSize() {
         // The calendar adds a weekday row, up to six week rows and a legend.
         const calendar = this._config?.calendar === true ? 5 : 0;
+        const copy = this._config?.copy_month === true ? 2 : 0;
 
-        return (this._shouldShowHeader() ? 8 : 7) + calendar;
+        return (this._shouldShowHeader() ? 8 : 7) + calendar + copy;
     }
 
     _getEntity() {
@@ -464,6 +466,7 @@ class IrrigationScheduleCard extends HTMLElement {
         this._isDirty = false;
         this._pendingEntitySync = false;
         this._externalChangePending = false;
+        this._copyConfirm = null;
         this._syncFromEntity(true);
         this._setStatus("Reloaded the schedule from Home Assistant.");
     }
@@ -635,11 +638,13 @@ class IrrigationScheduleCard extends HTMLElement {
 
     _changeMonth(delta) {
         this.currentMonth = (this.currentMonth + delta + 12) % 12;
+        this._copyConfirm = null;
         this.render();
     }
 
     _selectMonth(monthIndex) {
         this.currentMonth = Number(monthIndex);
+        this._copyConfirm = null;
         this.render();
     }
 
@@ -741,6 +746,72 @@ class IrrigationScheduleCard extends HTMLElement {
         if (commit && monthSchedule.stations[stationKey] !== parsed) {
             this.render();
         }
+    }
+
+    // "Copy this month" reuses the selected month in others, so a year does not
+    // have to be filled in twelve times. It never writes anything on its own:
+    // it asks first, says how many months already have times that it would
+    // replace, and leaves the card unsaved so Save (or Reload) decides.
+    _requestCopyMonth(target) {
+        if (!target) {
+            return;
+        }
+
+        this._copyConfirm = target;
+        this.render();
+    }
+
+    _cancelCopyMonth() {
+        this._copyConfirm = null;
+        this.render();
+    }
+
+    _copyMonthTo(target) {
+        const source = this._ensureScheduleData();
+        const targets = this._copyTargetIndexes(target);
+
+        targets.forEach((monthIndex) => {
+            this.scheduleData[monthIndex] = {
+                hours: [...source.hours],
+                stations: { ...source.stations },
+                interval_days: source.interval_days,
+            };
+        });
+
+        this._copyConfirm = null;
+        this._markDirty();
+        this.render();
+        this._setStatus(
+            `Copied ${this._formatMonthName(this.currentMonth)} to ` +
+            `${targets.length} ${targets.length === 1 ? "month" : "months"}. ` +
+            "Not saved yet."
+        );
+    }
+
+    _copyTargetIndexes(target) {
+        const all = Array.from({ length: 12 }, (_, index) => index);
+
+        if (target === "rest") {
+            return all.filter((index) => index > this.currentMonth);
+        }
+
+        return all.filter((index) => index !== this.currentMonth);
+    }
+
+    _copyTargetLabel(target) {
+        const count = this._copyTargetIndexes(target).length;
+        const noun = count === 1 ? "month" : "months";
+
+        return target === "rest"
+            ? `the remaining ${count} ${noun} of the year`
+            : `the other ${count} ${noun}`;
+    }
+
+    // How many of the months a copy would replace already have times set.
+    _copyReplacesCount(target) {
+        return this._copyTargetIndexes(target).filter(
+            (index) => this._getMonthSchedule(index).hours.length > 0
+        ).length;
     }
 
     _setStatus(message, type = "info") {
@@ -865,6 +936,19 @@ class IrrigationScheduleCard extends HTMLElement {
 
         root.querySelector("[data-action='reload-schedule']")?.addEventListener("click", () => {
             this._reloadFromEntity();
+        });
+
+        root.querySelector("[data-action='request-copy']")?.addEventListener("click", () => {
+            const target = root.querySelector("[data-role='copy-target']")?.value;
+            this._requestCopyMonth(target);
+        });
+
+        root.querySelector("[data-action='confirm-copy']")?.addEventListener("click", () => {
+            this._copyMonthTo(this._copyConfirm);
+        });
+
+        root.querySelector("[data-action='cancel-copy']")?.addEventListener("click", () => {
+            this._cancelCopyMonth();
         });
 
         const intervalInput = root.querySelector("[data-role='interval-days']");
@@ -1454,6 +1538,51 @@ class IrrigationScheduleCard extends HTMLElement {
                     color: var(--secondary-text-color);
                 }
 
+                .copy-row {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto;
+                    gap: 10px;
+                    align-items: center;
+                }
+
+                .compact-select {
+                    width: 100%;
+                    min-height: 40px;
+                    padding: 0 12px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 12px;
+                    background: var(--ha-card-background, var(--card-background-color, #fff));
+                    color: var(--primary-text-color);
+                    font: inherit;
+                    outline: none;
+                    cursor: pointer;
+                }
+
+                .compact-select:focus {
+                    border-color: var(--primary-color);
+                    box-shadow: 0 0 0 1px var(--primary-color);
+                }
+
+                .confirm-bar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    margin-top: 12px;
+                    padding: 10px 12px;
+                    border-radius: 12px;
+                    border: 1px solid color-mix(in srgb, var(--warning-color, #fb8c00) 40%, transparent);
+                    background: color-mix(in srgb, var(--warning-color, #fb8c00) 12%, transparent);
+                    color: var(--primary-text-color);
+                    font-size: 13px;
+                }
+
+                .confirm-actions {
+                    display: flex;
+                    gap: 8px;
+                }
+
                 .cal-grid {
                     display: grid;
                     grid-template-columns: repeat(7, 1fr);
@@ -1560,6 +1689,10 @@ class IrrigationScheduleCard extends HTMLElement {
 
                     .footer {
                         align-items: stretch;
+                    }
+
+                    .copy-row {
+                        grid-template-columns: 1fr;
                     }
 
                     .footer-actions {
@@ -1702,6 +1835,46 @@ class IrrigationScheduleCard extends HTMLElement {
                                 `).join("")}
                             </div>
                         </section>
+
+                        ${this._config?.copy_month === true ? `
+                            <section class="section">
+                                <h3 class="section-title">Copy this month</h3>
+                                <p class="section-description">Reuse the settings of ${escapeText(monthName)} in other months instead of filling in all twelve by hand. Nothing is saved until you press Save.</p>
+
+                                <div class="copy-row">
+                                    <select class="compact-select" data-role="copy-target" aria-label="Copy target">
+                                        <option value="rest">To the rest of the year</option>
+                                        <option value="all">To all other months</option>
+                                    </select>
+                                    <button class="quiet-button" type="button" data-action="request-copy">
+                                        <ha-icon icon="mdi:content-copy"></ha-icon>
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
+
+                                ${this._copyConfirm ? `
+                                    <div class="confirm-bar">
+                                        <span>
+                                            Overwrite ${escapeText(this._copyTargetLabel(this._copyConfirm))}
+                                            with ${escapeText(monthName)}?
+                                            ${this._copyReplacesCount(this._copyConfirm) ? escapeText(
+                                                this._copyReplacesCount(this._copyConfirm) === 1
+                                                    ? "1 of them already has times."
+                                                    : `${this._copyReplacesCount(this._copyConfirm)} of them already have times.`
+                                            ) : ""}
+                                        </span>
+                                        <span class="confirm-actions">
+                                            <button class="quiet-button" type="button" data-action="cancel-copy">
+                                                <span>Cancel</span>
+                                            </button>
+                                            <button class="quiet-button" type="button" data-action="confirm-copy">
+                                                <span>Overwrite</span>
+                                            </button>
+                                        </span>
+                                    </div>
+                                ` : ""}
+                            </section>
+                        ` : ""}
                     ` : `
                         <div class="placeholder">
                             ${entity ? "Loading schedule data..." : `Entity not found: ${escapeText(this.sensor)}`}

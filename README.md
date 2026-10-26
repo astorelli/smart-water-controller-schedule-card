@@ -166,6 +166,18 @@ It reads these attributes of the controller's **next schedule** sensor, publishe
 
 The sensor is the one named by `next_schedule`, else the sibling of the configured sensor (`..._controller_status` becomes `..._next_schedule`), else the only sensor that publishes `has_watering_slots`. With several controllers and no `next_schedule` the card does not guess.
 
+#### Optional "Copy this month"
+
+Off by default. Add `copy_month: true` to show a section that reuses the selected month (its times, minutes per station and interval) in the rest of the year or in all other months, instead of filling in twelve months by hand.
+
+```yaml
+type: custom:smart-water-controller-schedule-card
+sensor: sensor.rainbird_controller_status
+copy_month: true
+```
+
+It never writes anything on its own. Pressing **Copy** only asks: the confirmation names the months it would overwrite and how many of them already have times. **Overwrite** changes the card, not the controller: the card is marked "Unsaved changes" and nothing is sent until **Save**; **Reload** discards the copy. Changing month closes a pending confirmation, so a copy meant for one month cannot be confirmed on another.
+
 While there are unsaved edits the card shows an "Unsaved changes" badge and a Reload button. If the schedule changes in Home Assistant in the meantime, it says so: saving would overwrite that change, and Reload discards your edits instead. A time that is typed twice in a month is flagged, because the integration counts each one as a watering slot of its own.
 
 ## Tested migration
