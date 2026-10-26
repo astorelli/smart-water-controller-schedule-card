@@ -1,4 +1,956 @@
-(()=>{class n extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this.currentMonth=(new Date).getMonth(),this.scheduleData=null,this._hass=null,this._config=null,this._servicePrefix=null,this._status=null,this._isDirty=!1,this._lastLoadedScheduleJson=null,this._statusTimer=null,this._entitySignature=null,this._pendingEntitySync=!1,this.shadowRoot.addEventListener("focusout",()=>{window.setTimeout(()=>{this._hasActiveEditor()||!this._pendingEntitySync||this._isDirty||(this._pendingEntitySync=!1,this._syncFromEntity(!0))},0)})}setConfig(n){if(!n?.sensor)throw new Error("You need to define a sensor in config.");this._config=n,this.sensor=n.sensor,this._entitySignature=null,this._pendingEntitySync=!1,this._hass?this._syncFromEntity(!0):this.render()}set hass(n){if(this._hass=n,!this.sensor)return void this.render();const t=this._getEntity(),e=this._buildEntitySignature(t);e!==this._entitySignature&&(this._entitySignature=e,this._hasActiveEditor()?this._pendingEntitySync=!0:(this._pendingEntitySync=!1,this._syncFromEntity()))}getCardSize(){return this._shouldShowHeader()?8:7}_getEntity(){return this._hass?.states?.[this.sensor]??null}_hasActiveEditor(){const n=this.shadowRoot?.activeElement;return Boolean(n?.matches?.("input, select, textarea"))}_shouldShowHeader(){return Boolean(this._config?.header)}_getHeaderTitle(){if(!this._shouldShowHeader())return"";const n="string"==typeof this._config?.title?this._config.title.trim():"";if(n)return n;const t=this._getEntity(),e=t?.attributes?.friendly_name;return e?String(e):"Irrigation schedule"}_buildEntitySignature(n){return JSON.stringify({friendly_name:n?.attributes?.friendly_name??null,service_prefix:this._extractServicePrefix(n),schedule:n?.attributes?.schedule??null,station_names:n?.attributes?.station_names??null,header:Boolean(this._config?.header),title:this._getHeaderTitle()})}_extractServicePrefix(n){const t=n?.attributes??{};if(t.service_prefix)return String(t.service_prefix);if(t.controller_service_prefix)return String(t.controller_service_prefix);const e=(n?.entity_id||this.sensor||"").match(/^sensor\.([0-9a-fA-F]{2}(?:_[0-9a-fA-F]{2}){5})_/);return e?e[1]:null}_getStationLabel(n){const t=this._getEntity(),e=t?.attributes??{},i=Array.isArray(e.station_names)?e.station_names:[],r=String(n).match(/^station_(\d+)_minutes$/);if(r){const n=Number(r[1])-1;if(Number.isInteger(n)&&n>=0&&n<i.length&&i[n])return i[n]}return String(n).replace("_minutes","").replace("station_","Station ")}_syncFromEntity(n=!1){if(!this._hass||!this.sensor)return void this.render();const t=this._getEntity();this._servicePrefix=this._extractServicePrefix(t);const e=t?.attributes?.schedule,i=e?JSON.stringify(e):null;i&&(n||!this.scheduleData||!this._isDirty&&i!==this._lastLoadedScheduleJson)&&(this.scheduleData=JSON.parse(i),this._lastLoadedScheduleJson=i),!i&&n&&(this.scheduleData=null,this._lastLoadedScheduleJson=null),this.render()}_getMonthSchedule(n=this.currentMonth){if(!Array.isArray(this.scheduleData))return{hours:[],stations:{},interval_days:0};const t=this.scheduleData[n]||{};return{hours:Array.isArray(t.hours)?[...t.hours]:[],stations:t.stations&&"object"==typeof t.stations?{...t.stations}:{},interval_days:Number.isFinite(Number(t.interval_days))?Number(t.interval_days):0}}_ensureScheduleData(){Array.isArray(this.scheduleData)||(this.scheduleData=Array.from({length:12},()=>({hours:[],stations:{},interval_days:0}))),this.scheduleData[this.currentMonth]||(this.scheduleData[this.currentMonth]={hours:[],stations:{},interval_days:0});const n=this.scheduleData[this.currentMonth];return Array.isArray(n.hours)||(n.hours=[]),n.stations&&"object"==typeof n.stations||(n.stations={}),Number.isFinite(Number(n.interval_days))||(n.interval_days=0),n}_markDirty(){this._isDirty=!0}_formatMonthName(n){return new Date(2026,n,1).toLocaleString(void 0,{month:"long"})}_normalizeTimeForInput(n){if(!n)return"07:00";const t=String(n);return t.length>=5?t.slice(0,5):t}_normalizeTimeForStorage(n){if(!n)return"07:00:00";const t=String(n).trim();return/^\d{2}:\d{2}:\d{2}$/.test(t)?t:/^\d{2}:\d{2}$/.test(t)?`${t}:00`:"07:00:00"}_changeMonth(n){this.currentMonth=(this.currentMonth+n+12)%12,this.render()}_selectMonth(n){this.currentMonth=Number(n),this.render()}_updateIntervalDays(n){this._ensureScheduleData().interval_days=Math.max(0,parseInt(n,10)||0),this._markDirty()}_addTimeSlot(){this._ensureScheduleData().hours.push("07:00:00"),this._markDirty(),this.render()}_updateTimeSlot(n,t){const e=this._ensureScheduleData();(e.hours[n]||""===e.hours[n])&&(e.hours[n]=this._normalizeTimeForStorage(t),this._markDirty())}_removeTimeSlot(n){const t=this._ensureScheduleData();n<0||n>=t.hours.length||(t.hours.splice(n,1),this._markDirty(),this.render())}_updateStationTime(n,t){this._ensureScheduleData().stations[n]=Math.max(0,parseInt(t,10)||0),this._markDirty()}_setStatus(n,t="info"){this._status={message:n,type:t},this._statusTimer&&clearTimeout(this._statusTimer),this._statusTimer=setTimeout(()=>{this._status=null,this.render()},3500),this.render()}async _saveSchedule(){if(!this._hass)return void this._setStatus("Home Assistant is not ready yet.","error");if(!this._servicePrefix)return void this._setStatus("Could not determine the schedule service for this controller.","error");const n=Array.isArray(this.scheduleData)?this.scheduleData.map(n=>({hours:Array.isArray(n?.hours)?n.hours.map(n=>this._normalizeTimeForStorage(n)):[],stations:n?.stations&&"object"==typeof n.stations?{...n.stations}:{},interval_days:Math.max(0,parseInt(n?.interval_days,10)||0)})):[];try{await this._hass.callService("smart_water_controller",`set_irrigation_schedule_${this._servicePrefix}`,{schedule:n}),this._isDirty=!1,this._pendingEntitySync=!1,this._lastLoadedScheduleJson=JSON.stringify(n),this._setStatus("Schedule saved successfully.","success")}catch(n){this._setStatus(n?.message||"Failed to save the schedule.","error")}}_attachEventListeners(){const n=this.shadowRoot;if(!n)return;n.querySelector("[data-action='prev-month']")?.addEventListener("click",()=>{this._changeMonth(-1)}),n.querySelector("[data-action='next-month']")?.addEventListener("click",()=>{this._changeMonth(1)}),n.querySelector("[data-role='month-select']")?.addEventListener("change",n=>{this._selectMonth(n.target.value)}),n.querySelector("[data-action='add-time']")?.addEventListener("click",()=>{this._addTimeSlot()}),n.querySelector("[data-action='save-schedule']")?.addEventListener("click",()=>{this._saveSchedule()});const t=n.querySelector("[data-role='interval-days']");t?.addEventListener("input",n=>{this._updateIntervalDays(n.target.value)}),t?.addEventListener("change",n=>{this._updateIntervalDays(n.target.value)}),n.querySelectorAll("[data-role='time-slot']").forEach(n=>{const t=n=>{const t=Number(n.currentTarget.dataset.index);this._updateTimeSlot(t,n.currentTarget.value)};n.addEventListener("input",t),n.addEventListener("change",t)}),n.querySelectorAll("[data-action='remove-time']").forEach(n=>{n.addEventListener("click",n=>{const t=Number(n.currentTarget.dataset.index);this._removeTimeSlot(t)})}),n.querySelectorAll("[data-role='station-minutes']").forEach(n=>{const t=n=>{const t=n.currentTarget.dataset.stationKey;this._updateStationTime(t,n.currentTarget.value)};n.addEventListener("input",t),n.addEventListener("change",t)})}render(){if(!this.shadowRoot)return;const n=this._getEntity(),t=this._getMonthSchedule(),e=this._formatMonthName(this.currentMonth),i=Object.entries(t.stations||{}).sort((n,t)=>(parseInt(String(n[0]).replace(/\D/g,""),10)||0)-(parseInt(String(t[0]).replace(/\D/g,""),10)||0)),r=this._shouldShowHeader(),a=this._getHeaderTitle();this.shadowRoot.innerHTML=`\n            <style>\n                :host {\n                    display: block;\n                }\n\n                * {\n                    box-sizing: border-box;\n                }\n\n                ha-card {\n                    overflow: hidden;\n                }\n\n                .wrapper {\n                    padding: 16px;\n                }\n\n                .card-header {\n                    margin: 0 0 12px;\n                }\n                \n                .card-header-title {\n                    margin: 0;\n                    color: var(--ha-card-header-color, var(--primary-text-color));\n                    font-family: var(--ha-card-header-font-family, inherit);\n                    font-size: var(--ha-card-header-font-size, var(--ha-font-size-2xl));\n                    font-weight: var(--ha-font-weight-normal);\n                    letter-spacing: -0.012em;\n                    line-height: var(--ha-line-height-expanded);\n                }\n                \n                .card-header-title .name {\n                    display: block;\n                    white-space: nowrap;\n                    overflow: hidden;\n                    text-overflow: ellipsis;\n                }\n\n                .month-header {\n                    display: grid;\n                    grid-template-columns: auto minmax(0, 1fr) auto;\n                    align-items: center;\n                    gap: 12px;\n                    margin-bottom: 20px;\n                }\n\n                .icon-button {\n                    display: inline-flex;\n                    align-items: center;\n                    justify-content: center;\n                    width: 40px;\n                    height: 40px;\n                    border: 1px solid var(--divider-color);\n                    border-radius: 999px;\n                    background: var(--ha-card-background, var(--card-background-color, #fff));\n                    color: var(--primary-text-color);\n                    cursor: pointer;\n                    transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease;\n                }\n\n                .icon-button:hover {\n                    background: var(--secondary-background-color);\n                }\n\n                .icon-button:active {\n                    transform: scale(0.98);\n                }\n\n                .icon-button ha-icon {\n                    display: block;\n                    width: 20px;\n                    height: 20px;\n                    margin: 0;\n                    color: var(--secondary-text-color);\n                }\n\n                .month-select-wrap {\n                    position: relative;\n                }\n\n                .month-select {\n                    width: 100%;\n                    height: 44px;\n                    padding: 0 40px 0 14px;\n                    border: 1px solid var(--divider-color);\n                    border-radius: 12px;\n                    background: var(--ha-card-background, var(--card-background-color, #fff));\n                    color: var(--primary-text-color);\n                    font: inherit;\n                    font-size: 16px;\n                    font-weight: 500;\n                    appearance: none;\n                    outline: none;\n                    cursor: pointer;\n                }\n\n                .month-select:focus,\n                .field:focus,\n                .time-field:focus {\n                    border-color: var(--primary-color);\n                    box-shadow: 0 0 0 1px var(--primary-color);\n                }\n\n                .month-select-wrap ha-icon {\n                    position: absolute;\n                    right: 12px;\n                    top: 50%;\n                    transform: translateY(-50%);\n                    width: 20px;\n                    height: 20px;\n                    color: var(--secondary-text-color);\n                    pointer-events: none;\n                }\n\n                .section {\n                    padding: 16px;\n                    border: 1px solid var(--divider-color);\n                    border-radius: 16px;\n                    background: color-mix(\n                        in srgb,\n                        var(--ha-card-background, var(--card-background-color, #fff)) 92%,\n                        var(--primary-text-color) 8%\n                    );\n                }\n\n                .section + .section {\n                    margin-top: 16px;\n                }\n\n                .section-title {\n                    margin: 0 0 4px;\n                    font-size: 16px;\n                    font-weight: 600;\n                    color: var(--primary-text-color);\n                }\n\n                .section-description {\n                    margin: 0 0 14px;\n                    color: var(--secondary-text-color);\n                    font-size: 13px;\n                    line-height: 1.4;\n                }\n\n                .field,\n                .time-field {\n                    width: 100%;\n                    min-height: 44px;\n                    padding: 10px 12px;\n                    border: 1px solid var(--divider-color);\n                    border-radius: 12px;\n                    background: var(--ha-card-background, var(--card-background-color, #fff));\n                    color: var(--primary-text-color);\n                    font: inherit;\n                    outline: none;\n                }\n\n                .time-list {\n                    display: grid;\n                    gap: 12px;\n                }\n\n                .time-row {\n                    display: grid;\n                    grid-template-columns: minmax(0, 1fr) auto;\n                    gap: 10px;\n                    align-items: center;\n                }\n\n                .danger-button,\n                .add-button,\n                .save-button {\n                    display: inline-flex;\n                    align-items: center;\n                    justify-content: center;\n                    gap: 8px;\n                    min-height: 40px;\n                    padding: 0 14px;\n                    border-radius: 999px;\n                    border: 1px solid transparent;\n                    font: inherit;\n                    font-weight: 500;\n                    line-height: 1;\n                    cursor: pointer;\n                    transition: filter 160ms ease, transform 120ms ease, background-color 160ms ease;\n                }\n\n                .danger-button:active,\n                .add-button:active,\n                .save-button:active {\n                    transform: scale(0.99);\n                }\n\n                .danger-button {\n                    width: 40px;\n                    min-width: 40px;\n                    padding: 0;\n                    border-color: color-mix(in srgb, var(--error-color) 30%, transparent);\n                    background: color-mix(in srgb, var(--error-color) 12%, transparent);\n                    color: var(--error-color);\n                }\n\n                .danger-button ha-icon,\n                .add-button ha-icon,\n                .save-button ha-icon {\n                    display: block;\n                    width: 18px;\n                    height: 18px;\n                    margin: 0;\n                }\n\n                .add-button {\n                    margin-top: 14px;\n                    background: color-mix(in srgb, var(--primary-color) 12%, transparent);\n                    color: var(--primary-color);\n                    border-color: color-mix(in srgb, var(--primary-color) 28%, transparent);\n                }\n\n                .save-button {\n                    background: var(--primary-color);\n                    color: var(--text-primary-color, #fff);\n                    min-width: 110px;\n                }\n\n                .button-icon {\n                    display: inline-grid;\n                    place-items: center;\n                    line-height: 0;\n                    flex: 0 0 auto;\n                }\n\n                .nav-icon {\n                    width: 20px;\n                    height: 20px;\n                }\n\n                .nav-icon-prev {\n                    transform: translate(-1px, -2px);\n                }\n                \n                .nav-icon-next {\n                    transform: translate(1px, -2px);\n                }\n                \n                .danger-icon {\n                    width: 18px;\n                    height: 18px;\n                    transform: translate(-2px, -2.5px);\n                }\n                \n                .add-icon {\n                    width: 18px;\n                    height: 18px;\n                    transform: translate(-1px, -2.5px);\n                }\n                \n                .save-icon {\n                    width: 18px;\n                    height: 18px;\n                    transform: translate(-1px, -2.5px);\n                }\n\n                .station-list {\n                    display: grid;\n                    gap: 12px;\n                }\n\n                .station-row {\n                    display: grid;\n                    grid-template-columns: minmax(110px, auto) minmax(0, 1fr);\n                    gap: 12px;\n                    align-items: center;\n                }\n\n                .station-label {\n                    color: var(--primary-text-color);\n                    font-weight: 500;\n                }\n\n                .footer {\n                    display: flex;\n                    justify-content: space-between;\n                    align-items: center;\n                    gap: 12px;\n                    margin-top: 18px;\n                    flex-wrap: wrap;\n                }\n\n                .status {\n                    min-height: 20px;\n                    font-size: 13px;\n                    color: var(--secondary-text-color);\n                }\n\n                .status.success {\n                    color: var(--success-color, #2e7d32);\n                }\n\n                .status.error {\n                    color: var(--error-color);\n                }\n\n                .save-button[disabled] {\n                    opacity: 0.6;\n                    cursor: default;\n                }\n\n                .placeholder {\n                    padding: 18px 0 6px;\n                    color: var(--secondary-text-color);\n                }\n\n                @media (max-width: 520px) {\n                    .wrapper {\n                        padding: 12px;\n                    }\n\n                    .month-header {\n                        grid-template-columns: 40px minmax(0, 1fr) 40px;\n                        gap: 10px;\n                    }\n\n                    .station-row {\n                        grid-template-columns: 1fr;\n                        gap: 8px;\n                    }\n\n                    .footer {\n                        align-items: stretch;\n                    }\n\n                    .save-button {\n                        width: 100%;\n                        justify-content: center;\n                    }\n                }\n            </style>\n\n            <ha-card>\n                <div class="wrapper">\n                    ${r?`\n                        <div class="card-header">\n                            <div class="card-header-title">\n                                <div class="name">${a}</div>\n                            </div>\n                        </div>\n                    `:""}\n\n                    <div class="month-header">\n                        <button class="icon-button" type="button" data-action="prev-month" aria-label="Previous month">\n                            <span class="button-icon nav-icon nav-icon-prev">\n                                <ha-icon icon="mdi:chevron-left"></ha-icon>\n                            </span>\n                        </button>\n\n                        <div class="month-select-wrap">\n                            <select class="month-select" data-role="month-select" aria-label="Month">\n                                ${Array.from({length:12},(n,t)=>`\n                                    <option value="${t}" ${t===this.currentMonth?"selected":""}>\n                                        ${this._formatMonthName(t)}\n                                    </option>\n                                `).join("")}\n                            </select>\n                            <ha-icon icon="mdi:chevron-down"></ha-icon>\n                        </div>\n\n                        <button class="icon-button" type="button" data-action="next-month" aria-label="Next month">\n                            <span class="button-icon nav-icon nav-icon-next">\n                                <ha-icon icon="mdi:chevron-right"></ha-icon>\n                            </span>\n                        </button>\n                    </div>\n\n                    ${this.scheduleData?`\n                        <section class="section">\n                            <h3 class="section-title">Interval between sprinkles</h3>\n                            <p class="section-description">Number of days between watering cycles for ${e}.</p>\n                            <input\n                                class="field"\n                                type="number"\n                                min="0"\n                                step="1"\n                                inputmode="numeric"\n                                value="${t.interval_days}"\n                                data-role="interval-days"\n                            >\n                        </section>\n\n                        <section class="section">\n                            <h3 class="section-title">Scheduled times</h3>\n                            <p class="section-description">Add one or more times for this month. Times are stored in 24-hour format.</p>\n\n                            <div class="time-list">\n                                ${t.hours.map((n,t)=>`\n                                    <div class="time-row">\n                                        <input\n                                            class="time-field"\n                                            type="time"\n                                            value="${this._normalizeTimeForInput(n)}"\n                                            data-role="time-slot"\n                                            data-index="${t}"\n                                        >\n                                        <button\n                                            class="danger-button"\n                                            type="button"\n                                            data-action="remove-time"\n                                            data-index="${t}"\n                                            aria-label="Remove time ${this._normalizeTimeForInput(n)}"\n                                        >\n                                            <span class="button-icon danger-icon">\n                                                <ha-icon icon="mdi:close"></ha-icon>\n                                            </span>\n                                        </button>\n                                    </div>\n                                `).join("")}\n                            </div>\n\n                            <button class="add-button" type="button" data-action="add-time">\n                                <span class="button-icon add-icon">\n                                    <ha-icon icon="mdi:plus"></ha-icon>\n                                </span>\n                                <span>Add time</span>\n                            </button>\n                        </section>\n\n                        <section class="section">\n                            <h3 class="section-title">Sprinkle time per station</h3>\n                            <p class="section-description">Set the watering duration in minutes for each station in ${e}.</p>\n\n                            <div class="station-list">\n                                ${i.map(([n,t])=>`\n                                    <div class="station-row">\n                                        <div class="station-label">${this._getStationLabel(n)}</div>\n                                        <input\n                                            class="field"\n                                            type="number"\n                                            min="0"\n                                            step="1"\n                                            inputmode="numeric"\n                                            value="${t}"\n                                            data-role="station-minutes"\n                                            data-station-key="${n}"\n                                        >\n                                    </div>\n                                `).join("")}\n                            </div>\n                        </section>\n                    `:`\n                        <div class="placeholder">\n                            ${n?"Loading schedule data...":`Entity not found: ${this.sensor}`}\n                        </div>\n                    `}\n\n                    <div class="footer">\n                        <div class="status ${this._status?.type||""}">${this._status?.message||""}</div>\n                        <button\n                            class="save-button"\n                            type="button"\n                            data-action="save-schedule"\n                            ${this.scheduleData?"":"disabled"}\n                        >\n                            <span class="button-icon save-icon">\n                                <ha-icon icon="mdi:content-save"></ha-icon>\n                            </span>\n                            <span>Save</span>\n                        </button>\n                    </div>\n                </div>\n            </ha-card>\n        `,this._attachEventListeners()}}customElements.define("smart-water-controller-schedule-card",n)})();
+class IrrigationScheduleCard extends HTMLElement {
+    constructor() {
+        super();
+        this.attachShadow({ mode: "open" });
+
+        this.currentMonth = new Date().getMonth();
+        this.scheduleData = null;
+        this._hass = null;
+        this._config = null;
+        this._servicePrefix = null;
+        this._status = null;
+        this._isDirty = false;
+        this._lastLoadedScheduleJson = null;
+        this._statusTimer = null;
+        this._entitySignature = null;
+        this._pendingEntitySync = false;
+
+        this.shadowRoot.addEventListener("focusout", () => {
+            window.setTimeout(() => {
+                if (!this._hasActiveEditor() && this._pendingEntitySync && !this._isDirty) {
+                    this._pendingEntitySync = false;
+                    this._syncFromEntity(true);
+                }
+            }, 0);
+        });
+    }
+
+    setConfig(config) {
+        if (!config?.sensor) {
+            throw new Error("You need to define a sensor in config.");
+        }
+
+        this._config = config;
+        this.sensor = config.sensor;
+        this._entitySignature = null;
+        this._pendingEntitySync = false;
+
+        if (this._hass) {
+            this._syncFromEntity(true);
+        } else {
+            this.render();
+        }
+    }
+
+    set hass(hass) {
+        this._hass = hass;
+
+        if (!this.sensor) {
+            this.render();
+            return;
+        }
+
+        const entity = this._getEntity();
+        const nextSignature = this._buildEntitySignature(entity);
+
+        if (nextSignature === this._entitySignature) {
+            return;
+        }
+
+        this._entitySignature = nextSignature;
+
+        if (this._hasActiveEditor()) {
+            this._pendingEntitySync = true;
+            return;
+        }
+
+        this._pendingEntitySync = false;
+        this._syncFromEntity();
+    }
+
+    getCardSize() {
+        return this._shouldShowHeader() ? 8 : 7;
+    }
+
+    _getEntity() {
+        return this._hass?.states?.[this.sensor] ?? null;
+    }
+
+    _hasActiveEditor() {
+        const activeElement = this.shadowRoot?.activeElement;
+        return Boolean(activeElement?.matches?.("input, select, textarea"));
+    }
+
+    _shouldShowHeader() {
+        return Boolean(this._config?.header);
+    }
+
+    _getHeaderTitle() {
+        if (!this._shouldShowHeader()) {
+            return "";
+        }
+
+        const configuredTitle = typeof this._config?.title === "string"
+            ? this._config.title.trim()
+            : "";
+
+        if (configuredTitle) {
+            return configuredTitle;
+        }
+
+        const entity = this._getEntity();
+        const friendlyName = entity?.attributes?.friendly_name;
+
+        if (friendlyName) {
+            return String(friendlyName);
+        }
+
+        return "Irrigation schedule";
+    }
+
+    _buildEntitySignature(entity) {
+        return JSON.stringify({
+            friendly_name: entity?.attributes?.friendly_name ?? null,
+            service_prefix: this._extractServicePrefix(entity),
+            schedule: entity?.attributes?.schedule ?? null,
+            station_names: entity?.attributes?.station_names ?? null,
+            header: Boolean(this._config?.header),
+            title: this._getHeaderTitle(),
+        });
+    }
+
+    _extractServicePrefix(entity) {
+        const attrs = entity?.attributes ?? {};
+
+        if (attrs.service_prefix) {
+            return String(attrs.service_prefix);
+        }
+
+        if (attrs.controller_service_prefix) {
+            return String(attrs.controller_service_prefix);
+        }
+
+        const entityId = entity?.entity_id || this.sensor || "";
+        const match = entityId.match(
+            /^sensor\.([0-9a-fA-F]{2}(?:_[0-9a-fA-F]{2}){5})_/
+        );
+
+        return match ? match[1] : null;
+    }
+
+    _getStationLabel(stationKey) {
+        const entity = this._getEntity();
+        const attrs = entity?.attributes ?? {};
+        const stationNames = Array.isArray(attrs.station_names) ? attrs.station_names : [];
+
+        const match = String(stationKey).match(/^station_(\d+)_minutes$/);
+        if (match) {
+            const stationIndex = Number(match[1]) - 1;
+            if (
+                Number.isInteger(stationIndex) &&
+                stationIndex >= 0 &&
+                stationIndex < stationNames.length &&
+                stationNames[stationIndex]
+            ) {
+                return stationNames[stationIndex];
+            }
+        }
+
+        return String(stationKey)
+            .replace("_minutes", "")
+            .replace("station_", "Station ");
+    }
+
+    _syncFromEntity(force = false) {
+        if (!this._hass || !this.sensor) {
+            this.render();
+            return;
+        }
+
+        const entity = this._getEntity();
+        this._servicePrefix = this._extractServicePrefix(entity);
+
+        const schedule = entity?.attributes?.schedule;
+        const scheduleJson = schedule ? JSON.stringify(schedule) : null;
+
+        if (
+            scheduleJson &&
+            (
+                force ||
+                !this.scheduleData ||
+                (!this._isDirty && scheduleJson !== this._lastLoadedScheduleJson)
+            )
+        ) {
+            this.scheduleData = JSON.parse(scheduleJson);
+            this._lastLoadedScheduleJson = scheduleJson;
+        }
+
+        if (!scheduleJson && force) {
+            this.scheduleData = null;
+            this._lastLoadedScheduleJson = null;
+        }
+
+        this.render();
+    }
+
+    _getMonthSchedule(monthIndex = this.currentMonth) {
+        if (!Array.isArray(this.scheduleData)) {
+            return {
+                hours: [],
+                stations: {},
+                interval_days: 0,
+            };
+        }
+
+        const schedule = this.scheduleData[monthIndex] || {};
+
+        return {
+            hours: Array.isArray(schedule.hours) ? [...schedule.hours] : [],
+            stations:
+                schedule.stations && typeof schedule.stations === "object"
+                    ? { ...schedule.stations }
+                    : {},
+            interval_days: Number.isFinite(Number(schedule.interval_days))
+                ? Number(schedule.interval_days)
+                : 0,
+        };
+    }
+
+    _ensureScheduleData() {
+        if (!Array.isArray(this.scheduleData)) {
+            this.scheduleData = Array.from({ length: 12 }, () => ({
+                hours: [],
+                stations: {},
+                interval_days: 0,
+            }));
+        }
+
+        if (!this.scheduleData[this.currentMonth]) {
+            this.scheduleData[this.currentMonth] = {
+                hours: [],
+                stations: {},
+                interval_days: 0,
+            };
+        }
+
+        const monthSchedule = this.scheduleData[this.currentMonth];
+
+        if (!Array.isArray(monthSchedule.hours)) {
+            monthSchedule.hours = [];
+        }
+
+        if (!monthSchedule.stations || typeof monthSchedule.stations !== "object") {
+            monthSchedule.stations = {};
+        }
+
+        if (!Number.isFinite(Number(monthSchedule.interval_days))) {
+            monthSchedule.interval_days = 0;
+        }
+
+        return monthSchedule;
+    }
+
+    _markDirty() {
+        this._isDirty = true;
+    }
+
+    _formatMonthName(monthIndex) {
+        return new Date(2026, monthIndex, 1).toLocaleString(undefined, {
+            month: "long",
+        });
+    }
+
+    _normalizeTimeForInput(value) {
+        if (!value) {
+            return "07:00";
+        }
+
+        const str = String(value);
+        return str.length >= 5 ? str.slice(0, 5) : str;
+    }
+
+    _normalizeTimeForStorage(value) {
+        if (!value) {
+            return "07:00:00";
+        }
+
+        const str = String(value).trim();
+
+        if (/^\d{2}:\d{2}:\d{2}$/.test(str)) {
+            return str;
+        }
+
+        if (/^\d{2}:\d{2}$/.test(str)) {
+            return `${str}:00`;
+        }
+
+        return "07:00:00";
+    }
+
+    _changeMonth(delta) {
+        this.currentMonth = (this.currentMonth + delta + 12) % 12;
+        this.render();
+    }
+
+    _selectMonth(monthIndex) {
+        this.currentMonth = Number(monthIndex);
+        this.render();
+    }
+
+    _updateIntervalDays(value) {
+        const monthSchedule = this._ensureScheduleData();
+        monthSchedule.interval_days = Math.max(0, parseInt(value, 10) || 0);
+        this._markDirty();
+    }
+
+    _addTimeSlot() {
+        const monthSchedule = this._ensureScheduleData();
+        monthSchedule.hours.push("07:00:00");
+        this._markDirty();
+        this.render();
+    }
+
+    _updateTimeSlot(index, value) {
+        const monthSchedule = this._ensureScheduleData();
+
+        if (!monthSchedule.hours[index] && monthSchedule.hours[index] !== "") {
+            return;
+        }
+
+        monthSchedule.hours[index] = this._normalizeTimeForStorage(value);
+        this._markDirty();
+    }
+
+    _removeTimeSlot(index) {
+        const monthSchedule = this._ensureScheduleData();
+
+        if (index < 0 || index >= monthSchedule.hours.length) {
+            return;
+        }
+
+        monthSchedule.hours.splice(index, 1);
+        this._markDirty();
+        this.render();
+    }
+
+    _updateStationTime(stationKey, value) {
+        const monthSchedule = this._ensureScheduleData();
+        monthSchedule.stations[stationKey] = Math.max(0, parseInt(value, 10) || 0);
+        this._markDirty();
+    }
+
+    _setStatus(message, type = "info") {
+        this._status = { message, type };
+
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+        }
+
+        this._statusTimer = setTimeout(() => {
+            this._status = null;
+            this.render();
+        }, 3500);
+
+        this.render();
+    }
+
+    async _saveSchedule() {
+        if (!this._hass) {
+            this._setStatus("Home Assistant is not ready yet.", "error");
+            return;
+        }
+
+        if (!this._servicePrefix) {
+            this._setStatus("Could not determine the schedule service for this controller.", "error");
+            return;
+        }
+
+        const scheduleArray = Array.isArray(this.scheduleData)
+            ? this.scheduleData.map((monthSchedule) => ({
+                hours: Array.isArray(monthSchedule?.hours)
+                    ? monthSchedule.hours.map((hour) => this._normalizeTimeForStorage(hour))
+                    : [],
+                stations:
+                    monthSchedule?.stations && typeof monthSchedule.stations === "object"
+                        ? { ...monthSchedule.stations }
+                        : {},
+                interval_days: Math.max(0, parseInt(monthSchedule?.interval_days, 10) || 0),
+            }))
+            : [];
+
+        try {
+            await this._hass.callService(
+                "smart_water_controller",
+                `set_irrigation_schedule_${this._servicePrefix}`,
+                { schedule: scheduleArray }
+            );
+
+            this._isDirty = false;
+            this._pendingEntitySync = false;
+            this._lastLoadedScheduleJson = JSON.stringify(scheduleArray);
+            this._setStatus("Schedule saved successfully.", "success");
+        } catch (error) {
+            this._setStatus(
+                error?.message || "Failed to save the schedule.",
+                "error"
+            );
+        }
+    }
+
+    _attachEventListeners() {
+        const root = this.shadowRoot;
+        if (!root) {
+            return;
+        }
+
+        root.querySelector("[data-action='prev-month']")?.addEventListener("click", () => {
+            this._changeMonth(-1);
+        });
+
+        root.querySelector("[data-action='next-month']")?.addEventListener("click", () => {
+            this._changeMonth(1);
+        });
+
+        root.querySelector("[data-role='month-select']")?.addEventListener("change", (event) => {
+            this._selectMonth(event.target.value);
+        });
+
+        root.querySelector("[data-action='add-time']")?.addEventListener("click", () => {
+            this._addTimeSlot();
+        });
+
+        root.querySelector("[data-action='save-schedule']")?.addEventListener("click", () => {
+            this._saveSchedule();
+        });
+
+        const intervalInput = root.querySelector("[data-role='interval-days']");
+        intervalInput?.addEventListener("input", (event) => {
+            this._updateIntervalDays(event.target.value);
+        });
+        intervalInput?.addEventListener("change", (event) => {
+            this._updateIntervalDays(event.target.value);
+        });
+
+        root.querySelectorAll("[data-role='time-slot']").forEach((input) => {
+            const updateHandler = (event) => {
+                const index = Number(event.currentTarget.dataset.index);
+                this._updateTimeSlot(index, event.currentTarget.value);
+            };
+
+            input.addEventListener("input", updateHandler);
+            input.addEventListener("change", updateHandler);
+        });
+
+        root.querySelectorAll("[data-action='remove-time']").forEach((button) => {
+            button.addEventListener("click", (event) => {
+                const index = Number(event.currentTarget.dataset.index);
+                this._removeTimeSlot(index);
+            });
+        });
+
+        root.querySelectorAll("[data-role='station-minutes']").forEach((input) => {
+            const updateHandler = (event) => {
+                const stationKey = event.currentTarget.dataset.stationKey;
+                this._updateStationTime(stationKey, event.currentTarget.value);
+            };
+
+            input.addEventListener("input", updateHandler);
+            input.addEventListener("change", updateHandler);
+        });
+    }
+
+    render() {
+        if (!this.shadowRoot) {
+            return;
+        }
+
+        const entity = this._getEntity();
+        const monthSchedule = this._getMonthSchedule();
+        const monthName = this._formatMonthName(this.currentMonth);
+        const stationEntries = Object.entries(monthSchedule.stations || {}).sort((a, b) => {
+            const aNum = parseInt(String(a[0]).replace(/\D/g, ""), 10) || 0;
+            const bNum = parseInt(String(b[0]).replace(/\D/g, ""), 10) || 0;
+            return aNum - bNum;
+        });
+        const showHeader = this._shouldShowHeader();
+        const headerTitle = this._getHeaderTitle();
+
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: block;
+                }
+
+                * {
+                    box-sizing: border-box;
+                }
+
+                ha-card {
+                    overflow: hidden;
+                }
+
+                .wrapper {
+                    padding: 16px;
+                }
+
+                .card-header {
+                    margin: 0 0 12px;
+                }
+                
+                .card-header-title {
+                    margin: 0;
+                    color: var(--ha-card-header-color, var(--primary-text-color));
+                    font-family: var(--ha-card-header-font-family, inherit);
+                    font-size: var(--ha-card-header-font-size, var(--ha-font-size-2xl));
+                    font-weight: var(--ha-font-weight-normal);
+                    letter-spacing: -0.012em;
+                    line-height: var(--ha-line-height-expanded);
+                }
+                
+                .card-header-title .name {
+                    display: block;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .month-header {
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 12px;
+                    margin-bottom: 20px;
+                }
+
+                .icon-button {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 40px;
+                    height: 40px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 999px;
+                    background: var(--ha-card-background, var(--card-background-color, #fff));
+                    color: var(--primary-text-color);
+                    cursor: pointer;
+                    transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease;
+                }
+
+                .icon-button:hover {
+                    background: var(--secondary-background-color);
+                }
+
+                .icon-button:active {
+                    transform: scale(0.98);
+                }
+
+                .icon-button ha-icon {
+                    display: block;
+                    width: 20px;
+                    height: 20px;
+                    margin: 0;
+                    color: var(--secondary-text-color);
+                }
+
+                .month-select-wrap {
+                    position: relative;
+                }
+
+                .month-select {
+                    width: 100%;
+                    height: 44px;
+                    padding: 0 40px 0 14px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 12px;
+                    background: var(--ha-card-background, var(--card-background-color, #fff));
+                    color: var(--primary-text-color);
+                    font: inherit;
+                    font-size: 16px;
+                    font-weight: 500;
+                    appearance: none;
+                    outline: none;
+                    cursor: pointer;
+                }
+
+                .month-select:focus,
+                .field:focus,
+                .time-field:focus {
+                    border-color: var(--primary-color);
+                    box-shadow: 0 0 0 1px var(--primary-color);
+                }
+
+                .month-select-wrap ha-icon {
+                    position: absolute;
+                    right: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    width: 20px;
+                    height: 20px;
+                    color: var(--secondary-text-color);
+                    pointer-events: none;
+                }
+
+                .section {
+                    padding: 16px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 16px;
+                    background: color-mix(
+                        in srgb,
+                        var(--ha-card-background, var(--card-background-color, #fff)) 92%,
+                        var(--primary-text-color) 8%
+                    );
+                }
+
+                .section + .section {
+                    margin-top: 16px;
+                }
+
+                .section-title {
+                    margin: 0 0 4px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: var(--primary-text-color);
+                }
+
+                .section-description {
+                    margin: 0 0 14px;
+                    color: var(--secondary-text-color);
+                    font-size: 13px;
+                    line-height: 1.4;
+                }
+
+                .field,
+                .time-field {
+                    width: 100%;
+                    min-height: 44px;
+                    padding: 10px 12px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 12px;
+                    background: var(--ha-card-background, var(--card-background-color, #fff));
+                    color: var(--primary-text-color);
+                    font: inherit;
+                    outline: none;
+                }
+
+                .time-list {
+                    display: grid;
+                    gap: 12px;
+                }
+
+                .time-row {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto;
+                    gap: 10px;
+                    align-items: center;
+                }
+
+                .danger-button,
+                .add-button,
+                .save-button {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
+                    min-height: 40px;
+                    padding: 0 14px;
+                    border-radius: 999px;
+                    border: 1px solid transparent;
+                    font: inherit;
+                    font-weight: 500;
+                    line-height: 1;
+                    cursor: pointer;
+                    transition: filter 160ms ease, transform 120ms ease, background-color 160ms ease;
+                }
+
+                .danger-button:active,
+                .add-button:active,
+                .save-button:active {
+                    transform: scale(0.99);
+                }
+
+                .danger-button {
+                    width: 40px;
+                    min-width: 40px;
+                    padding: 0;
+                    border-color: color-mix(in srgb, var(--error-color) 30%, transparent);
+                    background: color-mix(in srgb, var(--error-color) 12%, transparent);
+                    color: var(--error-color);
+                }
+
+                .danger-button ha-icon,
+                .add-button ha-icon,
+                .save-button ha-icon {
+                    display: block;
+                    width: 18px;
+                    height: 18px;
+                    margin: 0;
+                }
+
+                .add-button {
+                    margin-top: 14px;
+                    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+                    color: var(--primary-color);
+                    border-color: color-mix(in srgb, var(--primary-color) 28%, transparent);
+                }
+
+                .save-button {
+                    background: var(--primary-color);
+                    color: var(--text-primary-color, #fff);
+                    min-width: 110px;
+                }
+
+                .button-icon {
+                    display: inline-grid;
+                    place-items: center;
+                    line-height: 0;
+                    flex: 0 0 auto;
+                }
+
+                .nav-icon {
+                    width: 20px;
+                    height: 20px;
+                }
+
+                .nav-icon-prev {
+                    transform: translate(-1px, -2px);
+                }
+                
+                .nav-icon-next {
+                    transform: translate(1px, -2px);
+                }
+                
+                .danger-icon {
+                    width: 18px;
+                    height: 18px;
+                    transform: translate(-2px, -2.5px);
+                }
+                
+                .add-icon {
+                    width: 18px;
+                    height: 18px;
+                    transform: translate(-1px, -2.5px);
+                }
+                
+                .save-icon {
+                    width: 18px;
+                    height: 18px;
+                    transform: translate(-1px, -2.5px);
+                }
+
+                .station-list {
+                    display: grid;
+                    gap: 12px;
+                }
+
+                .station-row {
+                    display: grid;
+                    grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+                    gap: 12px;
+                    align-items: center;
+                }
+
+                .station-label {
+                    color: var(--primary-text-color);
+                    font-weight: 500;
+                }
+
+                .footer {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    margin-top: 18px;
+                    flex-wrap: wrap;
+                }
+
+                .status {
+                    min-height: 20px;
+                    font-size: 13px;
+                    color: var(--secondary-text-color);
+                }
+
+                .status.success {
+                    color: var(--success-color, #2e7d32);
+                }
+
+                .status.error {
+                    color: var(--error-color);
+                }
+
+                .save-button[disabled] {
+                    opacity: 0.6;
+                    cursor: default;
+                }
+
+                .placeholder {
+                    padding: 18px 0 6px;
+                    color: var(--secondary-text-color);
+                }
+
+                @media (max-width: 520px) {
+                    .wrapper {
+                        padding: 12px;
+                    }
+
+                    .month-header {
+                        grid-template-columns: 40px minmax(0, 1fr) 40px;
+                        gap: 10px;
+                    }
+
+                    .station-row {
+                        grid-template-columns: 1fr;
+                        gap: 8px;
+                    }
+
+                    .footer {
+                        align-items: stretch;
+                    }
+
+                    .save-button {
+                        width: 100%;
+                        justify-content: center;
+                    }
+                }
+            </style>
+
+            <ha-card>
+                <div class="wrapper">
+                    ${showHeader ? `
+                        <div class="card-header">
+                            <div class="card-header-title">
+                                <div class="name">${headerTitle}</div>
+                            </div>
+                        </div>
+                    ` : ""}
+
+                    <div class="month-header">
+                        <button class="icon-button" type="button" data-action="prev-month" aria-label="Previous month">
+                            <span class="button-icon nav-icon nav-icon-prev">
+                                <ha-icon icon="mdi:chevron-left"></ha-icon>
+                            </span>
+                        </button>
+
+                        <div class="month-select-wrap">
+                            <select class="month-select" data-role="month-select" aria-label="Month">
+                                ${Array.from({ length: 12 }, (_, index) => `
+                                    <option value="${index}" ${index === this.currentMonth ? "selected" : ""}>
+                                        ${this._formatMonthName(index)}
+                                    </option>
+                                `).join("")}
+                            </select>
+                            <ha-icon icon="mdi:chevron-down"></ha-icon>
+                        </div>
+
+                        <button class="icon-button" type="button" data-action="next-month" aria-label="Next month">
+                            <span class="button-icon nav-icon nav-icon-next">
+                                <ha-icon icon="mdi:chevron-right"></ha-icon>
+                            </span>
+                        </button>
+                    </div>
+
+                    ${this.scheduleData ? `
+                        <section class="section">
+                            <h3 class="section-title">Interval between sprinkles</h3>
+                            <p class="section-description">Number of days between watering cycles for ${monthName}.</p>
+                            <input
+                                class="field"
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputmode="numeric"
+                                value="${monthSchedule.interval_days}"
+                                data-role="interval-days"
+                            >
+                        </section>
+
+                        <section class="section">
+                            <h3 class="section-title">Scheduled times</h3>
+                            <p class="section-description">Add one or more times for this month. Times are stored in 24-hour format.</p>
+
+                            <div class="time-list">
+                                ${monthSchedule.hours.map((hour, index) => `
+                                    <div class="time-row">
+                                        <input
+                                            class="time-field"
+                                            type="time"
+                                            value="${this._normalizeTimeForInput(hour)}"
+                                            data-role="time-slot"
+                                            data-index="${index}"
+                                        >
+                                        <button
+                                            class="danger-button"
+                                            type="button"
+                                            data-action="remove-time"
+                                            data-index="${index}"
+                                            aria-label="Remove time ${this._normalizeTimeForInput(hour)}"
+                                        >
+                                            <span class="button-icon danger-icon">
+                                                <ha-icon icon="mdi:close"></ha-icon>
+                                            </span>
+                                        </button>
+                                    </div>
+                                `).join("")}
+                            </div>
+
+                            <button class="add-button" type="button" data-action="add-time">
+                                <span class="button-icon add-icon">
+                                    <ha-icon icon="mdi:plus"></ha-icon>
+                                </span>
+                                <span>Add time</span>
+                            </button>
+                        </section>
+
+                        <section class="section">
+                            <h3 class="section-title">Sprinkle time per station</h3>
+                            <p class="section-description">Set the watering duration in minutes for each station in ${monthName}.</p>
+
+                            <div class="station-list">
+                                ${stationEntries.map(([stationKey, minutes]) => `
+                                    <div class="station-row">
+                                        <div class="station-label">${this._getStationLabel(stationKey)}</div>
+                                        <input
+                                            class="field"
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            inputmode="numeric"
+                                            value="${minutes}"
+                                            data-role="station-minutes"
+                                            data-station-key="${stationKey}"
+                                        >
+                                    </div>
+                                `).join("")}
+                            </div>
+                        </section>
+                    ` : `
+                        <div class="placeholder">
+                            ${entity ? "Loading schedule data..." : `Entity not found: ${this.sensor}`}
+                        </div>
+                    `}
+
+                    <div class="footer">
+                        <div class="status ${this._status?.type || ""}">${this._status?.message || ""}</div>
+                        <button
+                            class="save-button"
+                            type="button"
+                            data-action="save-schedule"
+                            ${this.scheduleData ? "" : "disabled"}
+                        >
+                            <span class="button-icon save-icon">
+                                <ha-icon icon="mdi:content-save"></ha-icon>
+                            </span>
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </div>
+            </ha-card>
+        `;
+
+        this._attachEventListeners();
+    }
+}
+
+customElements.define("smart-water-controller-schedule-card", IrrigationScheduleCard);
 ;
 /*
  * Irrigation Schedule - visual harmonization layer, v1.0

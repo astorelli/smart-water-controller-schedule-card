@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - "src/**"
+      - "scripts/**"
+      - "smart-water-controller-schedule-card.js"
       - "package.json"
       - "package-lock.json"
       - "webpack.config.js"
   pull_request:
     paths:
       - "src/**"
+      - "scripts/**"
+      - "smart-water-controller-schedule-card.js"
       - "package.json"
       - "package-lock.json"
       - "webpack.config.js"
@@ -30,6 +34,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Before the build: `npm run build` rewrites the bundle, so checking after
+      # it could never see a stale committed bundle.
+      - name: Check the build is complete, deterministic and committed
+        run: npm run check
 
       - name: Build card
         run: npm run build
