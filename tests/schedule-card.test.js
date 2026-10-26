@@ -409,3 +409,64 @@ test('the card redraws when the number of stations changes', () => {
 
   assert.equal(stationRows(card).length, 3);
 });
+// The integration keeps duplicate times and counts each one as a watering slot
+// of its own, so two identical times double the daily target. The card said
+// nothing. It warns; it does not change the schedule behind the user's back.
+
+const duplicateNotice = card => shadow(card).querySelector("[data-role='duplicate-notice']");
+
+test('duplicate times are flagged and the schedule is left as it is', async () => {
+  const months = juneSchedule();
+  months[5].hours = ['21:00:00', '07:00:00', '07:00:00'];
+  const { card, hass } = makeCard(window, { schedule: months });
+
+  assert.equal(duplicateNotice(card).hidden, false);
+  assert.match(duplicateNotice(card).textContent, /07:00:00/);
+  assert.match(duplicateNotice(card).textContent, /count twice/);
+
+  // Not sorted, not merged: what is stored is what is saved.
+  assert.deepEqual(plain(card.scheduleData[5].hours), ['21:00:00', '07:00:00', '07:00:00']);
+  await card._saveSchedule();
+  assert.deepEqual(plain(hass.calls[0].data.schedule[5].hours), ['21:00:00', '07:00:00', '07:00:00']);
+});
+
+test('no warning when every time is different', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+
+  assert.equal(duplicateNotice(card).hidden, true);
+});
+
+test('typing a time that already exists raises the warning without redrawing the field', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+  const second = shadow(card).querySelectorAll("[data-role='time-slot']")[1];
+  second.focus();
+
+  second.value = '07:00';
+  fire(window, second, 'input');
+
+  assert.equal(duplicateNotice(card).hidden, false);
+  assert.equal(shadow(card).activeElement, second);
+
+  second.value = '08:00';
+  fire(window, second, 'input');
+  assert.equal(duplicateNotice(card).hidden, true);
+});
+
+test('07:00 and 07:00:00 are the same time', () => {
+  const months = juneSchedule();
+  months[5].hours = ['07:00', '07:00:00'];
+  const { card } = makeCard(window, { schedule: months });
+
+  assert.equal(duplicateNotice(card).hidden, false);
+});
+
+test('adding and removing a time updates the warning', () => {
+  const { card } = makeCard(window, { schedule: juneSchedule() });
+
+  // A new time starts at 07:00:00, which June already has.
+  shadow(card).querySelector("[data-action='add-time']").click();
+  assert.equal(duplicateNotice(card).hidden, false);
+
+  shadow(card).querySelectorAll("[data-action='remove-time']")[2].click();
+  assert.equal(duplicateNotice(card).hidden, true);
+});

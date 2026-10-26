@@ -377,6 +377,18 @@ class IrrigationScheduleCard extends HTMLElement {
         if (externalNotice) {
             externalNotice.hidden = !this._externalChangePending;
         }
+
+        const duplicates = this._duplicateHours();
+        const duplicateNotice = root.querySelector("[data-role='duplicate-notice']");
+
+        if (duplicateNotice) {
+            duplicateNotice.hidden = duplicates.length === 0;
+
+            const text = duplicateNotice.querySelector("[data-role='duplicate-text']");
+            if (text) {
+                text.textContent = this._duplicateMessage(duplicates);
+            }
+        }
     }
 
     _formatMonthName(monthIndex) {
@@ -410,6 +422,35 @@ class IrrigationScheduleCard extends HTMLElement {
         }
 
         return null;
+    }
+
+    // Times that appear more than once in the month, normalized so that 07:00
+    // and 07:00:00 are recognised as the same time.
+    _duplicateHours() {
+        const seen = new Set();
+        const duplicates = new Set();
+
+        this._getMonthSchedule().hours.forEach((hour) => {
+            const normalized = this._normalizeTimeForStorage(hour);
+
+            if (!normalized) {
+                return;
+            }
+
+            if (seen.has(normalized)) {
+                duplicates.add(normalized);
+            }
+
+            seen.add(normalized);
+        });
+
+        return [...duplicates];
+    }
+
+    // The integration keeps duplicates and counts each one as a watering slot of
+    // its own, so two identical times double the daily target.
+    _duplicateMessage(duplicates) {
+        return `Duplicate times (${duplicates.join(", ")}) count twice towards the daily target.`;
     }
 
     _changeMonth(delta) {
@@ -480,6 +521,7 @@ class IrrigationScheduleCard extends HTMLElement {
 
         monthSchedule.hours[index] = normalized;
         this._markDirty();
+        this._patchNotices();
     }
 
     _removeTimeSlot(index) {
@@ -699,6 +741,7 @@ class IrrigationScheduleCard extends HTMLElement {
         ]);
         const showHeader = this._shouldShowHeader();
         const headerTitle = this._getHeaderTitle();
+        const duplicates = this._duplicateHours();
 
         this.shadowRoot.innerHTML = `
             <style>
@@ -1176,6 +1219,11 @@ class IrrigationScheduleCard extends HTMLElement {
                             The schedule changed in Home Assistant while you were editing.
                             Saving will overwrite it; use Reload to discard your edits.
                         </span>
+                    </div>
+
+                    <div class="notice warning" data-role="duplicate-notice" ${duplicates.length ? "" : "hidden"}>
+                        <ha-icon icon="mdi:alert-outline"></ha-icon>
+                        <span data-role="duplicate-text">${escapeText(this._duplicateMessage(duplicates))}</span>
                     </div>
 
                     ${this.scheduleData ? `
