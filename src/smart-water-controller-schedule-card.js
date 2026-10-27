@@ -1,3 +1,19 @@
+// Station names, the title, entity ids and error messages come from Home
+// Assistant or from the dashboard YAML. They are interpolated into innerHTML
+// below, so they must be escaped or a name like `<img onerror=...>` would run.
+function escapeText(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+function escapeAttribute(value) {
+    return escapeText(value)
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 class IrrigationScheduleCard extends HTMLElement {
     constructor() {
         super();
@@ -14,6 +30,7 @@ class IrrigationScheduleCard extends HTMLElement {
         this._statusTimer = null;
         this._entitySignature = null;
         this._pendingEntitySync = false;
+        this._externalChangePending = false;
 
         this.shadowRoot.addEventListener("focusout", () => {
             window.setTimeout(() => {
@@ -59,8 +76,16 @@ class IrrigationScheduleCard extends HTMLElement {
 
         this._entitySignature = nextSignature;
 
+        // The schedule changed in Home Assistant while the card holds unsaved
+        // edits. The edits are kept, which means saving will overwrite that
+        // change: say so instead of leaving the card showing stale data.
+        if (this._isDirty && this._scheduleDiffersFromLoaded(entity)) {
+            this._externalChangePending = true;
+        }
+
         if (this._hasActiveEditor()) {
             this._pendingEntitySync = true;
+            this._patchNotices();
             return;
         }
 
@@ -114,6 +139,7 @@ class IrrigationScheduleCard extends HTMLElement {
             service_prefix: this._extractServicePrefix(entity),
             schedule: entity?.attributes?.schedule ?? null,
             station_names: entity?.attributes?.station_names ?? null,
+            num_stations: entity?.attributes?.num_stations ?? null,
             header: Boolean(this._config?.header),
             title: this._getHeaderTitle(),
         });
@@ -161,6 +187,58 @@ class IrrigationScheduleCard extends HTMLElement {
             .replace("station_", "Station ");
     }
 
+    // How many stations to offer a row for. Taken from what the integration
+    // publishes on the sensor, not from the minutes stored for the current
+    // month: a month with nothing stored showed no row at all and could never
+    // be configured from the card.
+    _getStationCount() {
+        const attrs = this._getEntity()?.attributes ?? {};
+        const declared = Number(attrs.num_stations);
+
+        if (Number.isInteger(declared) && declared > 0) {
+            return declared;
+        }
+
+        if (Array.isArray(attrs.station_names) && attrs.station_names.length > 0) {
+            return attrs.station_names.length;
+        }
+
+        // Last resort, for an integration that publishes neither: the highest
+        // station stored anywhere in the schedule.
+        let highest = 0;
+        const months = Array.isArray(this.scheduleData) ? this.scheduleData : [];
+
+        months.forEach((monthSchedule) => {
+            Object.keys(monthSchedule?.stations ?? {}).forEach((stationKey) => {
+                const match = String(stationKey).match(/^station_(\d+)_minutes$/);
+
+                if (match) {
+                    highest = Math.max(highest, Number(match[1]));
+                }
+            });
+        });
+
+        return highest;
+    }
+
+    // Every station of the controller, plus any other key already stored for
+    // the month, so nothing in the schedule is hidden from the editor.
+    _getStationKeys(monthSchedule) {
+        const keys = new Set();
+
+        for (let stationId = 1; stationId <= this._getStationCount(); stationId += 1) {
+            keys.add(`station_${stationId}_minutes`);
+        }
+
+        Object.keys(monthSchedule.stations || {}).forEach((stationKey) => keys.add(stationKey));
+
+        return [...keys].sort((a, b) => {
+            const aNum = parseInt(String(a).replace(/\D/g, ""), 10) || 0;
+            const bNum = parseInt(String(b).replace(/\D/g, ""), 10) || 0;
+            return aNum - bNum;
+        });
+    }
+
     _syncFromEntity(force = false) {
         if (!this._hass || !this.sensor) {
             this.render();
@@ -183,14 +261,31 @@ class IrrigationScheduleCard extends HTMLElement {
         ) {
             this.scheduleData = JSON.parse(scheduleJson);
             this._lastLoadedScheduleJson = scheduleJson;
+            this._externalChangePending = false;
         }
 
         if (!scheduleJson && force) {
             this.scheduleData = null;
             this._lastLoadedScheduleJson = null;
+            this._externalChangePending = false;
         }
 
         this.render();
+    }
+
+    _scheduleDiffersFromLoaded(entity) {
+        const schedule = entity?.attributes?.schedule;
+
+        return Boolean(schedule) && JSON.stringify(schedule) !== this._lastLoadedScheduleJson;
+    }
+
+    // Throw away the local edits and show what Home Assistant has.
+    _reloadFromEntity() {
+        this._isDirty = false;
+        this._pendingEntitySync = false;
+        this._externalChangePending = false;
+        this._syncFromEntity(true);
+        this._setStatus("Reloaded the schedule from Home Assistant.");
     }
 
     _getMonthSchedule(monthIndex = this.currentMonth) {
@@ -251,7 +346,49 @@ class IrrigationScheduleCard extends HTMLElement {
     }
 
     _markDirty() {
+        const wasDirty = this._isDirty;
         this._isDirty = true;
+
+        if (!wasDirty) {
+            this._patchNotices();
+        }
+    }
+
+    // Show or hide the "unsaved changes" badge, the Reload button and the
+    // outside-change notice in place. Redrawing would take the focus away from
+    // the field being edited, which is when these change.
+    _patchNotices() {
+        const root = this.shadowRoot;
+        const badge = root?.querySelector("[data-role='dirty-badge']");
+
+        if (!badge) {
+            this.render();
+            return;
+        }
+
+        badge.hidden = !this._isDirty;
+
+        const reloadButton = root.querySelector("[data-action='reload-schedule']");
+        if (reloadButton) {
+            reloadButton.hidden = !this._isDirty;
+        }
+
+        const externalNotice = root.querySelector("[data-role='external-notice']");
+        if (externalNotice) {
+            externalNotice.hidden = !this._externalChangePending;
+        }
+
+        const duplicates = this._duplicateHours();
+        const duplicateNotice = root.querySelector("[data-role='duplicate-notice']");
+
+        if (duplicateNotice) {
+            duplicateNotice.hidden = duplicates.length === 0;
+
+            const text = duplicateNotice.querySelector("[data-role='duplicate-text']");
+            if (text) {
+                text.textContent = this._duplicateMessage(duplicates);
+            }
+        }
     }
 
     _formatMonthName(monthIndex) {
@@ -262,19 +399,19 @@ class IrrigationScheduleCard extends HTMLElement {
 
     _normalizeTimeForInput(value) {
         if (!value) {
-            return "07:00";
+            return "";
         }
 
         const str = String(value);
         return str.length >= 5 ? str.slice(0, 5) : str;
     }
 
+    // Returns HH:MM:SS, or null when the value is not a time. It used to fall
+    // back to 07:00:00 for anything it did not understand, which turned the
+    // empty value a time field reports while it is being retyped into a stored
+    // 07:00:00.
     _normalizeTimeForStorage(value) {
-        if (!value) {
-            return "07:00:00";
-        }
-
-        const str = String(value).trim();
+        const str = String(value ?? "").trim();
 
         if (/^\d{2}:\d{2}:\d{2}$/.test(str)) {
             return str;
@@ -284,7 +421,36 @@ class IrrigationScheduleCard extends HTMLElement {
             return `${str}:00`;
         }
 
-        return "07:00:00";
+        return null;
+    }
+
+    // Times that appear more than once in the month, normalized so that 07:00
+    // and 07:00:00 are recognised as the same time.
+    _duplicateHours() {
+        const seen = new Set();
+        const duplicates = new Set();
+
+        this._getMonthSchedule().hours.forEach((hour) => {
+            const normalized = this._normalizeTimeForStorage(hour);
+
+            if (!normalized) {
+                return;
+            }
+
+            if (seen.has(normalized)) {
+                duplicates.add(normalized);
+            }
+
+            seen.add(normalized);
+        });
+
+        return [...duplicates];
+    }
+
+    // The integration keeps duplicates and counts each one as a watering slot of
+    // its own, so two identical times double the daily target.
+    _duplicateMessage(duplicates) {
+        return `Duplicate times (${duplicates.join(", ")}) count twice towards the daily target.`;
     }
 
     _changeMonth(delta) {
@@ -297,10 +463,34 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateIntervalDays(value) {
+    _updateIntervalDays(value, { commit = false } = {}) {
+        const str = String(value ?? "").trim();
+
+        // An empty field is a half-typed number, not a request for 0. Writing it
+        // on every keystroke reset the interval whenever the box was cleared to
+        // retype it. `commit` is true when the field is left (the change event):
+        // redraw so the field shows what is stored.
+        if (str === "") {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        const parsed = parseInt(str, 10);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
         const monthSchedule = this._ensureScheduleData();
-        monthSchedule.interval_days = Math.max(0, parseInt(value, 10) || 0);
+        monthSchedule.interval_days = Math.max(0, parsed);
         this._markDirty();
+
+        if (commit && monthSchedule.interval_days !== parsed) {
+            this.render();
+        }
     }
 
     _addTimeSlot() {
@@ -310,15 +500,28 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateTimeSlot(index, value) {
+    _updateTimeSlot(index, value, { commit = false } = {}) {
         const monthSchedule = this._ensureScheduleData();
 
-        if (!monthSchedule.hours[index] && monthSchedule.hours[index] !== "") {
+        if (!Number.isInteger(index) || index < 0 || index >= monthSchedule.hours.length) {
             return;
         }
 
-        monthSchedule.hours[index] = this._normalizeTimeForStorage(value);
+        const normalized = this._normalizeTimeForStorage(value);
+
+        // A time input reports an empty value while it is being retyped. Keep
+        // the last valid time and, once the field is left, show it again.
+        if (!normalized) {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        monthSchedule.hours[index] = normalized;
         this._markDirty();
+        this._patchNotices();
     }
 
     _removeTimeSlot(index) {
@@ -333,10 +536,31 @@ class IrrigationScheduleCard extends HTMLElement {
         this.render();
     }
 
-    _updateStationTime(stationKey, value) {
+    _updateStationTime(stationKey, value, { commit = false } = {}) {
+        const str = String(value ?? "").trim();
+
+        // Same as the interval: an empty field is not a request for 0.
+        if (str === "") {
+            if (commit) {
+                this.render();
+            }
+
+            return;
+        }
+
+        const parsed = parseInt(str, 10);
+
+        if (!Number.isFinite(parsed)) {
+            return;
+        }
+
         const monthSchedule = this._ensureScheduleData();
-        monthSchedule.stations[stationKey] = Math.max(0, parseInt(value, 10) || 0);
+        monthSchedule.stations[stationKey] = Math.max(0, parsed);
         this._markDirty();
+
+        if (commit && monthSchedule.stations[stationKey] !== parsed) {
+            this.render();
+        }
     }
 
     _setStatus(message, type = "info") {
@@ -348,10 +572,25 @@ class IrrigationScheduleCard extends HTMLElement {
 
         this._statusTimer = setTimeout(() => {
             this._status = null;
-            this.render();
+            this._patchStatus();
         }, 3500);
 
-        this.render();
+        this._patchStatus();
+    }
+
+    // Update the status line in place. Every render() replaces the whole shadow
+    // DOM, so redrawing for a status message - or for the timer that clears it a
+    // few seconds later - took the focus away from the field being typed into.
+    _patchStatus() {
+        const node = this.shadowRoot?.querySelector("[data-role='status']");
+
+        if (!node) {
+            this.render();
+            return;
+        }
+
+        node.className = `status ${this._status?.type || ""}`;
+        node.textContent = this._status?.message || "";
     }
 
     async _saveSchedule() {
@@ -363,6 +602,25 @@ class IrrigationScheduleCard extends HTMLElement {
         if (!this._servicePrefix) {
             this._setStatus("Could not determine the schedule service for this controller.", "error");
             return;
+        }
+
+        // Never store a time the card cannot read. Replacing it with 07:00:00,
+        // as this used to, would change the schedule behind the user's back;
+        // saying so lets them fix it.
+        const months = Array.isArray(this.scheduleData) ? this.scheduleData : [];
+
+        for (let monthIndex = 0; monthIndex < months.length; monthIndex += 1) {
+            const hours = Array.isArray(months[monthIndex]?.hours) ? months[monthIndex].hours : [];
+            const invalid = hours.find((hour) => !this._normalizeTimeForStorage(hour));
+
+            if (invalid !== undefined) {
+                this._setStatus(
+                    `${this._formatMonthName(monthIndex)} has a time that is not valid ` +
+                    `("${invalid}"). Fix or remove it, then save again.`,
+                    "error"
+                );
+                return;
+            }
         }
 
         const scheduleArray = Array.isArray(this.scheduleData)
@@ -387,7 +645,9 @@ class IrrigationScheduleCard extends HTMLElement {
 
             this._isDirty = false;
             this._pendingEntitySync = false;
+            this._externalChangePending = false;
             this._lastLoadedScheduleJson = JSON.stringify(scheduleArray);
+            this._patchNotices();
             this._setStatus("Schedule saved successfully.", "success");
         } catch (error) {
             this._setStatus(
@@ -423,22 +683,28 @@ class IrrigationScheduleCard extends HTMLElement {
             this._saveSchedule();
         });
 
+        root.querySelector("[data-action='reload-schedule']")?.addEventListener("click", () => {
+            this._reloadFromEntity();
+        });
+
         const intervalInput = root.querySelector("[data-role='interval-days']");
         intervalInput?.addEventListener("input", (event) => {
             this._updateIntervalDays(event.target.value);
         });
         intervalInput?.addEventListener("change", (event) => {
-            this._updateIntervalDays(event.target.value);
+            this._updateIntervalDays(event.target.value, { commit: true });
         });
 
         root.querySelectorAll("[data-role='time-slot']").forEach((input) => {
-            const updateHandler = (event) => {
+            input.addEventListener("input", (event) => {
                 const index = Number(event.currentTarget.dataset.index);
                 this._updateTimeSlot(index, event.currentTarget.value);
-            };
+            });
 
-            input.addEventListener("input", updateHandler);
-            input.addEventListener("change", updateHandler);
+            input.addEventListener("change", (event) => {
+                const index = Number(event.currentTarget.dataset.index);
+                this._updateTimeSlot(index, event.currentTarget.value, { commit: true });
+            });
         });
 
         root.querySelectorAll("[data-action='remove-time']").forEach((button) => {
@@ -449,13 +715,15 @@ class IrrigationScheduleCard extends HTMLElement {
         });
 
         root.querySelectorAll("[data-role='station-minutes']").forEach((input) => {
-            const updateHandler = (event) => {
+            input.addEventListener("input", (event) => {
                 const stationKey = event.currentTarget.dataset.stationKey;
                 this._updateStationTime(stationKey, event.currentTarget.value);
-            };
+            });
 
-            input.addEventListener("input", updateHandler);
-            input.addEventListener("change", updateHandler);
+            input.addEventListener("change", (event) => {
+                const stationKey = event.currentTarget.dataset.stationKey;
+                this._updateStationTime(stationKey, event.currentTarget.value, { commit: true });
+            });
         });
     }
 
@@ -467,13 +735,13 @@ class IrrigationScheduleCard extends HTMLElement {
         const entity = this._getEntity();
         const monthSchedule = this._getMonthSchedule();
         const monthName = this._formatMonthName(this.currentMonth);
-        const stationEntries = Object.entries(monthSchedule.stations || {}).sort((a, b) => {
-            const aNum = parseInt(String(a[0]).replace(/\D/g, ""), 10) || 0;
-            const bNum = parseInt(String(b[0]).replace(/\D/g, ""), 10) || 0;
-            return aNum - bNum;
-        });
+        const stationEntries = this._getStationKeys(monthSchedule).map((stationKey) => [
+            stationKey,
+            monthSchedule.stations?.[stationKey] ?? 0,
+        ]);
         const showHeader = this._shouldShowHeader();
         const headerTitle = this._getHeaderTitle();
+        const duplicates = this._duplicateHours();
 
         this.shadowRoot.innerHTML = `
             <style>
@@ -754,6 +1022,93 @@ class IrrigationScheduleCard extends HTMLElement {
                     font-weight: 500;
                 }
 
+                .notice {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-bottom: 14px;
+                    padding: 10px 12px;
+                    border-radius: 12px;
+                    font-size: 13px;
+                    line-height: 1.4;
+                }
+
+                .notice[hidden] {
+                    display: none;
+                }
+
+                .notice ha-icon {
+                    flex: 0 0 auto;
+                    width: 18px;
+                    height: 18px;
+                }
+
+                .notice.warning {
+                    border: 1px solid color-mix(in srgb, var(--warning-color, #fb8c00) 40%, transparent);
+                    background: color-mix(in srgb, var(--warning-color, #fb8c00) 12%, transparent);
+                    color: var(--primary-text-color);
+                }
+
+                .badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 3px 10px;
+                    border-radius: 999px;
+                    font-size: 12px;
+                    font-weight: 500;
+                    background: color-mix(in srgb, var(--warning-color, #fb8c00) 18%, transparent);
+                    color: var(--primary-text-color);
+                    border: 1px solid color-mix(in srgb, var(--warning-color, #fb8c00) 40%, transparent);
+                }
+
+                .badge[hidden] {
+                    display: none;
+                }
+
+                .badge ha-icon {
+                    width: 14px;
+                    height: 14px;
+                }
+
+                .quiet-button {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    min-height: 32px;
+                    padding: 0 12px;
+                    border: 1px solid var(--divider-color);
+                    border-radius: 999px;
+                    background: transparent;
+                    color: var(--secondary-text-color);
+                    font: inherit;
+                    font-size: 13px;
+                    font-weight: 500;
+                    cursor: pointer;
+                }
+
+                .quiet-button[hidden] {
+                    display: none;
+                }
+
+                .quiet-button:hover {
+                    background: var(--secondary-background-color);
+                }
+
+                .quiet-button ha-icon {
+                    display: block;
+                    width: 18px;
+                    height: 18px;
+                    margin: 0;
+                }
+
+                .footer-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
                 .footer {
                     display: flex;
                     justify-content: space-between;
@@ -782,6 +1137,12 @@ class IrrigationScheduleCard extends HTMLElement {
                     cursor: default;
                 }
 
+                .empty-hint {
+                    margin: 0;
+                    color: var(--secondary-text-color);
+                    font-size: 13px;
+                }
+
                 .placeholder {
                     padding: 18px 0 6px;
                     color: var(--secondary-text-color);
@@ -806,8 +1167,12 @@ class IrrigationScheduleCard extends HTMLElement {
                         align-items: stretch;
                     }
 
-                    .save-button {
+                    .footer-actions {
                         width: 100%;
+                    }
+
+                    .save-button {
+                        flex: 1;
                         justify-content: center;
                     }
                 }
@@ -818,7 +1183,7 @@ class IrrigationScheduleCard extends HTMLElement {
                     ${showHeader ? `
                         <div class="card-header">
                             <div class="card-header-title">
-                                <div class="name">${headerTitle}</div>
+                                <div class="name">${escapeText(headerTitle)}</div>
                             </div>
                         </div>
                     ` : ""}
@@ -834,7 +1199,7 @@ class IrrigationScheduleCard extends HTMLElement {
                             <select class="month-select" data-role="month-select" aria-label="Month">
                                 ${Array.from({ length: 12 }, (_, index) => `
                                     <option value="${index}" ${index === this.currentMonth ? "selected" : ""}>
-                                        ${this._formatMonthName(index)}
+                                        ${escapeText(this._formatMonthName(index))}
                                     </option>
                                 `).join("")}
                             </select>
@@ -848,17 +1213,30 @@ class IrrigationScheduleCard extends HTMLElement {
                         </button>
                     </div>
 
+                    <div class="notice warning" data-role="external-notice" ${this._externalChangePending ? "" : "hidden"}>
+                        <ha-icon icon="mdi:alert-outline"></ha-icon>
+                        <span>
+                            The schedule changed in Home Assistant while you were editing.
+                            Saving will overwrite it; use Reload to discard your edits.
+                        </span>
+                    </div>
+
+                    <div class="notice warning" data-role="duplicate-notice" ${duplicates.length ? "" : "hidden"}>
+                        <ha-icon icon="mdi:alert-outline"></ha-icon>
+                        <span data-role="duplicate-text">${escapeText(this._duplicateMessage(duplicates))}</span>
+                    </div>
+
                     ${this.scheduleData ? `
                         <section class="section">
                             <h3 class="section-title">Interval between sprinkles</h3>
-                            <p class="section-description">Number of days between watering cycles for ${monthName}.</p>
+                            <p class="section-description">Number of days between watering cycles for ${escapeText(monthName)}.</p>
                             <input
                                 class="field"
                                 type="number"
                                 min="0"
                                 step="1"
                                 inputmode="numeric"
-                                value="${monthSchedule.interval_days}"
+                                value="${escapeAttribute(monthSchedule.interval_days)}"
                                 data-role="interval-days"
                             >
                         </section>
@@ -873,7 +1251,7 @@ class IrrigationScheduleCard extends HTMLElement {
                                         <input
                                             class="time-field"
                                             type="time"
-                                            value="${this._normalizeTimeForInput(hour)}"
+                                            value="${escapeAttribute(this._normalizeTimeForInput(hour))}"
                                             data-role="time-slot"
                                             data-index="${index}"
                                         >
@@ -882,7 +1260,7 @@ class IrrigationScheduleCard extends HTMLElement {
                                             type="button"
                                             data-action="remove-time"
                                             data-index="${index}"
-                                            aria-label="Remove time ${this._normalizeTimeForInput(hour)}"
+                                            aria-label="Remove time ${escapeAttribute(this._normalizeTimeForInput(hour))}"
                                         >
                                             <span class="button-icon danger-icon">
                                                 <ha-icon icon="mdi:close"></ha-icon>
@@ -902,21 +1280,24 @@ class IrrigationScheduleCard extends HTMLElement {
 
                         <section class="section">
                             <h3 class="section-title">Sprinkle time per station</h3>
-                            <p class="section-description">Set the watering duration in minutes for each station in ${monthName}.</p>
+                            <p class="section-description">Set the watering duration in minutes for each station in ${escapeText(monthName)}.</p>
 
                             <div class="station-list">
+                                ${stationEntries.length === 0 ? `
+                                    <p class="empty-hint">No stations reported by the integration yet.</p>
+                                ` : ""}
                                 ${stationEntries.map(([stationKey, minutes]) => `
                                     <div class="station-row">
-                                        <div class="station-label">${this._getStationLabel(stationKey)}</div>
+                                        <div class="station-label">${escapeText(this._getStationLabel(stationKey))}</div>
                                         <input
                                             class="field"
                                             type="number"
                                             min="0"
                                             step="1"
                                             inputmode="numeric"
-                                            value="${minutes}"
+                                            value="${escapeAttribute(minutes)}"
                                             data-role="station-minutes"
-                                            data-station-key="${stationKey}"
+                                            data-station-key="${escapeAttribute(stationKey)}"
                                         >
                                     </div>
                                 `).join("")}
@@ -924,23 +1305,39 @@ class IrrigationScheduleCard extends HTMLElement {
                         </section>
                     ` : `
                         <div class="placeholder">
-                            ${entity ? "Loading schedule data..." : `Entity not found: ${this.sensor}`}
+                            ${entity ? "Loading schedule data..." : `Entity not found: ${escapeText(this.sensor)}`}
                         </div>
                     `}
 
                     <div class="footer">
-                        <div class="status ${this._status?.type || ""}">${this._status?.message || ""}</div>
-                        <button
-                            class="save-button"
-                            type="button"
-                            data-action="save-schedule"
-                            ${this.scheduleData ? "" : "disabled"}
-                        >
-                            <span class="button-icon save-icon">
-                                <ha-icon icon="mdi:content-save"></ha-icon>
+                        <div class="status ${this._status?.type || ""}" data-role="status">${escapeText(this._status?.message || "")}</div>
+                        <div class="footer-actions">
+                            <span class="badge" data-role="dirty-badge" ${this._isDirty ? "" : "hidden"}>
+                                <ha-icon icon="mdi:pencil-outline"></ha-icon>
+                                <span>Unsaved changes</span>
                             </span>
-                            <span>Save</span>
-                        </button>
+                            <button
+                                class="quiet-button"
+                                type="button"
+                                data-action="reload-schedule"
+                                aria-label="Discard the edits and reload the schedule from Home Assistant"
+                                ${this._isDirty ? "" : "hidden"}
+                            >
+                                <ha-icon icon="mdi:refresh"></ha-icon>
+                                <span>Reload</span>
+                            </button>
+                            <button
+                                class="save-button"
+                                type="button"
+                                data-action="save-schedule"
+                                ${this.scheduleData ? "" : "disabled"}
+                            >
+                                <span class="button-icon save-icon">
+                                    <ha-icon icon="mdi:content-save"></ha-icon>
+                                </span>
+                                <span>Save</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </ha-card>
