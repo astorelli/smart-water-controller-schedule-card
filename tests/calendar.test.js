@@ -175,6 +175,57 @@ test('no day is marked in the pattern view either when every station is at 0 min
   assert.deepEqual(watering(card), []);
 });
 
+// Without `interval_anchor` the card counts from the later of the last rain and
+// the last sprinkle, which is what the scheduler does. `blocked_today: null`
+// leaves today to the arithmetic, so the anchor is what decides the phase.
+const withoutAnchor = overrides => published({ interval_anchor: null, blocked_today: null, ...overrides });
+
+test('without the published anchor it counts from the rain when that is more recent', () => {
+  const { card } = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, {
+      next: withoutAnchor({ last_sprinkle: '2026-06-10T07:00:00+02:00', last_rain: '2026-06-18T16:00:00+02:00' })
+    })
+  );
+
+  assert.deepEqual(watering(card), [20, 22, 24, 26, 28, 30]);
+});
+
+test('without the published anchor it counts from the sprinkle when that is more recent', () => {
+  const { card } = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, {
+      next: withoutAnchor({ last_sprinkle: '2026-06-18T07:00:00+02:00', last_rain: '2026-06-10T16:00:00+02:00' })
+    })
+  );
+
+  assert.deepEqual(watering(card), [20, 22, 24, 26, 28, 30]);
+});
+
+test('without the published anchor it uses whichever of the two is a valid date', () => {
+  const rainOnly = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, { next: withoutAnchor({ last_sprinkle: null, last_rain: '2026-06-18T16:00:00+02:00' }) })
+  );
+  const sprinkleOnly = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, { next: withoutAnchor({ last_sprinkle: '2026-06-18T07:00:00+02:00', last_rain: 'not a date' }) })
+  );
+  const neither = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, { next: withoutAnchor({ last_sprinkle: null, last_rain: null }) })
+  );
+
+  assert.deepEqual(watering(rainOnly.card), [20, 22, 24, 26, 28, 30]);
+  assert.deepEqual(watering(sprinkleOnly.card), [20, 22, 24, 26, 28, 30]);
+  assert.match(note(neither.card), /pattern/i);
+});
+
+test('the published anchor still wins over the two fallbacks', () => {
+  const { card } = atToday('2026-06-19', () =>
+    makeCard({ calendar: true }, {
+      next: published({ blocked_today: null, interval_anchor: '2026-06-17T08:00:00+02:00', last_sprinkle: '2026-06-18T07:00:00+02:00', last_rain: '2026-06-18T16:00:00+02:00' })
+    })
+  );
+
+  assert.deepEqual(watering(card), [19, 21, 23, 25, 27, 29]);
+});
+
 test('it follows the anchor when it rains, without the schedule changing', () => {
   const { card, hass } = atToday('2026-06-19', () => makeCard({ calendar: true }));
   assert.deepEqual(watering(card), [19, 21, 23, 25, 27, 29]);

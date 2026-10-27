@@ -408,9 +408,15 @@ class IrrigationScheduleCard extends HTMLElement {
     _getIntervalContext() {
         const attrs = this._getNextScheduleEntity()?.attributes ?? {};
 
+        // Without the published anchor, count from the later of the two, as the
+        // scheduler does: a rain after the last sprinkle resets the interval too.
+        const wet = [toMidnight(attrs.last_sprinkle), toMidnight(attrs.last_rain)]
+            .filter(Boolean);
         const anchor = attrs.interval_anchor
             ? toMidnight(attrs.interval_anchor)
-            : toMidnight(attrs.last_sprinkle) ?? toMidnight(attrs.last_rain);
+            : wet.length
+                ? new Date(Math.max(...wet.map((date) => date.getTime())))
+                : null;
 
         return {
             anchor,
