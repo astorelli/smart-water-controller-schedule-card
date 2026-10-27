@@ -1007,10 +1007,15 @@ class IrrigationScheduleCard extends HTMLElement {
     _renderCalendar(monthSchedule) {
         const year = this._getDisplayYear();
         const context = this._getIntervalContext();
+        const hasTimes = (monthSchedule.hours ?? []).some(Boolean);
+        // Times on a station with no minutes start nothing, so with every
+        // station at 0 there is no day to mark, only the note to write.
+        const canWater = Object.values(monthSchedule.stations ?? {})
+            .some((value) => Number(value) > 0);
         const projection = projectWateringDays({
             year,
             monthIndex: this.currentMonth,
-            hours: monthSchedule.hours,
+            hours: canWater ? monthSchedule.hours : [],
             intervalDays: monthSchedule.interval_days,
             anchor: context.anchor,
             blockedToday: context.blockedToday,
@@ -1061,15 +1066,12 @@ class IrrigationScheduleCard extends HTMLElement {
             }),
         ].join("");
 
-        const stationMinutes = Object.values(monthSchedule.stations ?? {})
-            .reduce((total, value) => total + (Number(value) || 0), 0);
-
         const every = `every ${projection.intervalDays} ${projection.intervalDays === 1 ? "day" : "days"}`;
         let note;
 
-        if (!projection.hours.length) {
+        if (!hasTimes) {
             note = "No times configured for this month, so no day waters.";
-        } else if (!stationMinutes) {
+        } else if (!canWater) {
             note =
                 "Times are set but every station is at 0 minutes, so these days " +
                 "start nothing.";

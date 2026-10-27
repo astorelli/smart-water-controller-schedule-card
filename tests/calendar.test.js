@@ -144,6 +144,37 @@ test('a month with no times, or with every station at 0, says that nothing water
   assert.match(note(zero.card), /0 minutes/);
 });
 
+test('no day is marked while every station is at 0 minutes, whatever the note says', () => {
+  const zero = atToday('2026-06-19', () => {
+    const attributes = { schedule: juneSchedule() };
+    attributes.schedule[5].stations = { station_1_minutes: 0, station_2_minutes: 0 };
+    return makeCard({ calendar: true }, { attributes });
+  });
+
+  assert.deepEqual(watering(zero.card), []);
+  assert.equal(zero.card.shadowRoot.querySelectorAll('.cal-cell .cal-dot').length, 0);
+  assert.equal(zero.card.shadowRoot.querySelectorAll('.cal-cell.waters').length, 0);
+  assert.match(note(zero.card), /0 minutes/);
+
+  // One station with minutes is enough: it is the schedule the integration would run.
+  const one = atToday('2026-06-19', () => {
+    const attributes = { schedule: juneSchedule() };
+    attributes.schedule[5].stations = { station_1_minutes: 0, station_2_minutes: 5 };
+    return makeCard({ calendar: true }, { attributes });
+  });
+  assert.deepEqual(watering(one.card), [19, 21, 23, 25, 27, 29]);
+});
+
+test('no day is marked in the pattern view either when every station is at 0 minutes', () => {
+  const { card } = atToday('2026-10-26', () => {
+    const attributes = { schedule: juneSchedule() };
+    attributes.schedule[5].stations = { station_1_minutes: 0, station_2_minutes: 0 };
+    return makeCard({ calendar: true }, { attributes, next: null });
+  });
+
+  assert.deepEqual(watering(card), []);
+});
+
 test('it follows the anchor when it rains, without the schedule changing', () => {
   const { card, hass } = atToday('2026-06-19', () => makeCard({ calendar: true }));
   assert.deepEqual(watering(card), [19, 21, 23, 25, 27, 29]);
